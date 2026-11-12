@@ -82,6 +82,28 @@ export const defaultFilters: Filters = {
   maxNon300: null,
 };
 export const scoreMods = (score: Score) => score.modsDisplay || modLabel(score.mods);
+export function hitBreakdown(s: Score): { text: string; label: string } {
+  const counts =
+    s.mode === 3
+      ? [s.nGeki ?? 0, s.n300, s.nKatu ?? 0, s.n100, s.n50]
+      : s.mode === 1
+        ? [s.n300, s.n100]
+        : s.mode === 2
+          ? [s.n300, s.n100, s.n50, s.nKatu ?? 0]
+          : [s.n300, s.n100, s.n50];
+  const labels =
+    s.mode === 3
+      ? ['MAX', '300', '200', '100', '50']
+      : s.mode === 1
+        ? ['300', '100']
+        : s.mode === 2
+          ? ['fruits', 'droplets', 'tiny droplets', 'tiny droplet misses']
+          : ['300', '100', '50'];
+  return {
+    text: `${counts.join(' / ')} · ${s.misses}× miss`,
+    label: `${counts.map((n, i) => `${labels[i]}: ${n}`).join(', ')}; misses: ${s.misses}`,
+  };
+}
 export function non300(s: Score): number {
   return s.mode === 2
     ? (s.nKatu ?? 0) + s.misses

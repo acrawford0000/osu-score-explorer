@@ -105,6 +105,9 @@ pub fn load(path: &Path) -> Result<Library, String> {
     for r in rows {
         let mut score: Score = serde_json::from_str(&r.map_err(|e| e.to_string())?)
             .map_err(|e| format!("Cached score could not be read: {e}"))?;
+        // Lazer legacy/guest records can share the placeholder ID 1 across
+        // unrelated names. Normalize old caches too, without recalculating PP.
+        score.player_id = score.player_id.filter(|id| *id > 1);
         if score.calculation_version != ENGINE
             && score.calculation_version != crate::lazer::ENGINE
             && score.pp.is_some()

@@ -14,6 +14,7 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 - Keep both clients selected or explore either history on its own.
 - Sort by PP, stars, accuracy, most recent, or potential FC PP gain.
 - See achieved combo alongside the map's maximum combo.
+- See hit counts on every card to understand exactly how a near-SS play fell short.
 
 ## Find your next goal
 

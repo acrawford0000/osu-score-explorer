@@ -23,7 +23,7 @@ try {
     const background = [...(m?.BeatmapSet?.Files || [])].find(f => f.Filename?.replaceAll('\\','/').toLowerCase() === metadata?.BackgroundFile?.replaceAll('\\','/').toLowerCase());
     rows.push({
       id: s.ID.toString(), legacy: s.IsLegacyScore, legacyId: s.LegacyOnlineID > 0 ? String(s.LegacyOnlineID) : null,
-      onlineId: s.OnlineID > 0 ? String(s.OnlineID) : null, playerId: s.User?.OnlineID > 0 ? s.User.OnlineID : null,
+      onlineId: s.OnlineID > 0 ? String(s.OnlineID) : null, playerId: s.User?.OnlineID > 1 ? s.User.OnlineID : null,
       player: s.User?.Username || 'Unknown player', date: s.Date.toISOString(), mode: s.Ruleset?.OnlineID,
       mapHash: m?.MD5Hash || '', mapSha: s.BeatmapHash || '', mapPath: filePath(m?.Hash), artwork: filePath(background?.File?.Hash),
       title: metadata?.TitleUnicode || metadata?.Title || 'Unmatched beatmap', artist: metadata?.ArtistUnicode || metadata?.Artist || '',

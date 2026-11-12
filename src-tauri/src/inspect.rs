@@ -78,6 +78,11 @@ fn main() {
             .filter(|s| s.player == player || s.player_aliases.iter().any(|p| p == player))
             .collect();
         let mut periods = std::collections::BTreeMap::<String, usize>::new();
+        let mut players = std::collections::BTreeMap::<String, usize>::new();
+        for s in &personal {
+            *players.entry(s.player.clone()).or_default() += 1;
+        }
+        println!("Selected player: {player}; matched names: {players:?}");
         for s in personal.iter().filter(|s| s.mode == 0 && s.gameplay_lazer) {
             *periods.entry(s.date[..7].to_string()).or_default() += 1;
         }

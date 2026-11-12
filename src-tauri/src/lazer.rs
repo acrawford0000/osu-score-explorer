@@ -11,7 +11,7 @@ use std::{
 };
 
 pub const ENGINE: &str = "rosu-pp 4.0.1 / lazer / policy-1";
-const ADAPTER: &str = "realm-adapter-2";
+const ADAPTER: &str = "realm-adapter-3";
 #[derive(Deserialize)]
 struct Export {
     schema: u64,
@@ -637,6 +637,66 @@ mod tests {
         b.n100 = 1;
         b.map_hash = "different".into();
         assert!(!same_play(&a, &b));
+    }
+    #[test]
+    fn cached_placeholder_ids_never_join_unrelated_player_histories() {
+        let path = std::env::temp_dir().join(format!("sx-players-{}.sqlite", std::process::id()));
+        let _ = fs::remove_file(&path);
+        {
+            let c = library::db(&path).unwrap();
+            let mut personal = score("stable:personal", "stable");
+            personal.player = "Local player".into();
+            let mut imported = personal.clone();
+            imported.id = "lazer:imported".into();
+            imported.source = "lazer".into();
+            imported.player_id = Some(1);
+            let mut stranger = score("lazer:stranger", "lazer");
+            stranger.player = "WhiteCat".into();
+            stranger.player_id = Some(1);
+            let mut renamed = score("stable:renamed", "stable");
+            renamed.player = "Old name".into();
+            let mut online = renamed.clone();
+            online.id = "lazer:online".into();
+            online.source = "lazer".into();
+            online.player = "New name".into();
+            online.player_id = Some(42);
+            let mut native = online.clone();
+            native.id = "lazer:native".into();
+            native.gameplay_lazer = true;
+            for s in [personal, imported, stranger, renamed, online, native] {
+                c.execute(
+                    "INSERT INTO scores VALUES(?1,?2,NULL)",
+                    params![s.id, serde_json::to_string(&s).unwrap()],
+                )
+                .unwrap();
+            }
+            for (alias, canonical) in [
+                ("lazer:imported", "stable:personal"),
+                ("lazer:online", "stable:renamed"),
+            ] {
+                c.execute(
+                    "INSERT INTO score_links VALUES(?1,?2)",
+                    params![alias, canonical],
+                )
+                .unwrap();
+            }
+        }
+        let l = library::load(&path).unwrap();
+        let stranger = l.scores.iter().find(|s| s.player == "WhiteCat").unwrap();
+        assert_eq!(stranger.player_id, None);
+        assert_eq!(stranger.player_aliases, vec!["WhiteCat"]);
+        let personal = l
+            .scores
+            .iter()
+            .find(|s| s.player == "Local player")
+            .unwrap();
+        assert_eq!(personal.player_aliases, vec!["Local player"]);
+        assert_eq!(personal.sources, vec!["lazer", "stable"]);
+        let native = l.scores.iter().find(|s| s.id == "lazer:native").unwrap();
+        assert_eq!(native.player_aliases, vec!["New name", "Old name"]);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
     #[test]
     fn combined_load_counts_a_duplicate_once_and_keeps_raw_records() {

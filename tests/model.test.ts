@@ -1,8 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { defaultFilters, filterScores, trends, strongIdentity, modLabel } from '../src/lib/model';
+import {
+  defaultFilters,
+  filterScores,
+  trends,
+  strongIdentity,
+  modLabel,
+  hitBreakdown,
+} from '../src/lib/model';
 import { demoScores } from '../src/lib/demo';
 const base = demoScores()[0];
 describe('score exploration', () => {
+  it('shows the exact SS choke judgments with mode-specific labels', () => {
+    const s = { ...base, n300: 400, n100: 3, n50: 2, misses: 1, nGeki: 500, nKatu: 4 };
+    expect(hitBreakdown({ ...s, mode: 0 })).toEqual({
+      text: '400 / 3 / 2 · 1× miss',
+      label: '300: 400, 100: 3, 50: 2; misses: 1',
+    });
+    expect(hitBreakdown({ ...s, mode: 1 }).text).toBe('400 / 3 · 1× miss');
+    expect(hitBreakdown({ ...s, mode: 2 }).label).toBe(
+      'fruits: 400, droplets: 3, tiny droplets: 2, tiny droplet misses: 4; misses: 1',
+    );
+    expect(hitBreakdown({ ...s, mode: 3 }).text).toBe('500 / 400 / 4 / 3 / 2 · 1× miss');
+    expect(hitBreakdown({ ...s, mode: 0, n100: 0, n50: 0, misses: 0 }).text).toBe(
+      '400 / 0 / 0 · 0× miss',
+    );
+  });
   it('defaults to both sources and counts a merged play once under either source', () => {
     const rows = [
       { ...base, id: 'stable', source: 'stable' as const },
@@ -54,6 +76,59 @@ describe('score exploration', () => {
         player: 'Old name',
       }),
     ).toHaveLength(1);
+  });
+  it('keeps other players out of exploration and progression for either source', () => {
+    const rows = [
+      {
+        ...base,
+        id: 'mine-stable',
+        source: 'stable' as const,
+        player: 'acrawford69',
+        playerAliases: ['acrawford69'],
+        stars: 4,
+      },
+      {
+        ...base,
+        id: 'mine-lazer',
+        source: 'lazer' as const,
+        player: 'ACrawford69',
+        playerAliases: ['acrawford69', 'ACrawford69'],
+        stars: 6,
+      },
+      {
+        ...base,
+        id: 'other-lazer',
+        source: 'lazer' as const,
+        player: 'WhiteCat',
+        playerAliases: ['WhiteCat'],
+        stars: 10,
+      },
+      {
+        ...base,
+        id: 'other-stable',
+        source: 'stable' as const,
+        player: 'Shinobu',
+        playerAliases: ['Shinobu'],
+        sources: ['stable', 'lazer'] as ('stable' | 'lazer')[],
+        stars: 9,
+      },
+    ];
+    for (const includeStable of [true, false]) {
+      const filtered = filterScores(rows, {
+        ...defaultFilters,
+        player: 'acrawford69',
+        includeStable,
+      });
+      expect(filtered.map((s) => s.id).sort()).toEqual(
+        includeStable ? ['mine-lazer', 'mine-stable'] : ['mine-lazer'],
+      );
+      for (const unique of [true, false]) {
+        const chart = trends(filtered, 'stars', 'month', unique);
+        expect(chart.reduce((n, p) => n + p.count, 0)).toBe(unique ? 1 : filtered.length);
+        expect(chart.find((p) => p.count)?.value).toBe(unique || !includeStable ? 6 : 5);
+      }
+    }
+    expect(filterScores(rows, { ...defaultFilters, player: '' })).toHaveLength(4);
   });
   it('filters all four modes and supports all modes explicitly', () => {
     const rows = [0, 1, 2, 3].map((mode) => ({ ...base, id: String(mode), mode }));

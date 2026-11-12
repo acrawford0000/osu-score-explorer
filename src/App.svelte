@@ -31,6 +31,7 @@
     filterScores,
     modLabel,
     scoreMods,
+    hitBreakdown,
     trends,
     type Score,
     type Library,
@@ -497,7 +498,7 @@
             >
           </div>
         {:else if view === 'cards'}<div class="score-grid">
-            {#each visible as score, i (score.id)}<button
+            {#each visible as score, i (score.id)}{@const hits = hitBreakdown(score)}<button
                 class="score-card"
                 onclick={() => (selected = score)}
                 ><div class="card-art">
@@ -533,6 +534,9 @@
                     <div class="card-accuracy">
                       {number(score.accuracy, 2)}<small>% accuracy</small>
                     </div>
+                  </div>
+                  <div class="card-hits" title={hits.label} aria-label={hits.label}>
+                    {hits.text}
                   </div>
                   <div class="card-secondary">
                     <span
