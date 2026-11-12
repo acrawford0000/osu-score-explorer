@@ -505,24 +505,22 @@
             >
           </div>
         </div>
-        <div class="ss-filter">
-          <label for="non300"
-            >Max non-300s <span class="muted">100s + 50s + misses in standard</span></label
-          ><input
-            id="non300"
-            type="number"
-            min="0"
-            step="1"
-            placeholder="Any"
-            value={filters.maxNon300 ?? ''}
-            oninput={(e) =>
-              (filters.maxNon300 =
-                e.currentTarget.value === ''
-                  ? null
-                  : Math.max(0, Math.floor(Number(e.currentTarget.value))))}
-          />
-        </div>
         {#if advanced}<div class="advanced-filters">
+            <label title="Non-perfect judgments: 100s, 50s and misses in standard."
+              >Max non-300s<input
+                id="non300"
+                type="number"
+                min="0"
+                step="1"
+                placeholder="Any"
+                value={filters.maxNon300 ?? ''}
+                oninput={(e) =>
+                  (filters.maxNon300 =
+                    e.currentTarget.value === ''
+                      ? null
+                      : Math.max(0, Math.floor(Number(e.currentTarget.value))))}
+              /></label
+            >
             <label
               >Minimum stars<input
                 type="number"
@@ -662,8 +660,13 @@
                         {number(score.accuracy, 2)}<small>% accuracy</small>
                       </div>
                     </div>
-                    <div class="card-hits" title={hits.label} aria-label={hits.label}>
-                      {hits.text}
+                    <div class="card-hit-row">
+                      <span class="card-hits" title={hits.label} aria-label={hits.label}
+                        >{hits.text}</span
+                      >
+                      {#if !score.fc && score.fcPp !== null}<span class="fc-estimate"
+                          >{number(score.fcPp)} pp if FC</span
+                        >{/if}
                     </div>
                     <div class="card-secondary">
                       <span
@@ -672,9 +675,7 @@
                           : `${score.misses} miss${score.misses === 1 ? '' : 'es'}`}<span
                           class="middot">·</span
                         >{number(score.combo)} / {number(score.maxCombo)}× combo</span
-                      >{#if !score.fc && score.fcPp !== null}<span class="fc-estimate"
-                          >{number(score.fcPp)} pp if FC</span
-                        >{:else}<span>{score.date.slice(0, 10)}</span>{/if}
+                      ><time datetime={score.date}>{score.date.slice(0, 10)}</time>
                     </div>
                   </div></button
                 >
@@ -848,36 +849,9 @@
         </div>
         <div class="settings-grid">
           <section class="settings-panel">
-            <div class="panel-heading">
-              <h2>Replay exports</h2>
-              <Download size={19} />
-            </div>
-            <p>
-              Save local stable and lazer replays as .osr files. Choose a default folder, or pick
-              one the first time you export.
-            </p>
-            <label
-              >Default export folder<input
-                bind:value={replayFolder}
-                placeholder="Ask on first export"
-              /></label
-            >
-            <div class="setting-actions">
-              <button class="button" disabled={!isDesktop} onclick={chooseReplayFolder}
-                ><FolderOpen size={15} />Choose folder</button
-              ><button class="button secondary" onclick={() => (replayFolder = '')}
-                >Clear default</button
-              >
-            </div>
-            {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
-          </section>
-          <section class="settings-panel">
             <FolderOpen size={22} />
-            <h2>Your sources</h2>
-            <p>
-              Both sources are imported locally. Matching legacy plays are counted once and retain
-              both source labels. Close lazer before reading a changed database.
-            </p>
+            <h2>Sources & exports</h2>
+            <p>Read scores from stable and lazer, and choose where to save replay exports.</p>
             <div class="source-row">
               <span>Stable</span><code>{root}</code><button
                 class="text-button"
@@ -890,15 +864,30 @@
                 onclick={() => (importing = true)}>Configure</button
               >
             </div>
-            <button class="button" disabled={busy || !isDesktop} onclick={() => scan()}
-              ><RefreshCw size={16} />Rescan both sources</button
-            ><button
-              class="text-button"
-              disabled={busy || !isDesktop}
-              onclick={() => scan(false, 'lazer')}>Rescan lazer only</button
-            ><button class="text-button" disabled={busy || !isDesktop} onclick={() => scan(true)}
-              >Recheck all map files</button
-            >
+            <div class="source-row replay-folder-row">
+              <label for="replay-folder">Replay exports</label><input
+                id="replay-folder"
+                aria-label="Default export folder"
+                bind:value={replayFolder}
+                placeholder="Ask on first export"
+              />
+              <button class="text-button" disabled={!isDesktop} onclick={chooseReplayFolder}
+                >Choose folder</button
+              >
+              <button class="text-button" onclick={() => (replayFolder = '')}>Clear default</button>
+            </div>
+            {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
+            <div class="setting-actions">
+              <button class="button" disabled={busy || !isDesktop} onclick={() => scan()}
+                ><RefreshCw size={16} />Rescan both sources</button
+              ><button
+                class="text-button"
+                disabled={busy || !isDesktop}
+                onclick={() => scan(false, 'lazer')}>Rescan lazer only</button
+              ><button class="text-button" disabled={busy || !isDesktop} onclick={() => scan(true)}
+                >Recheck all map files</button
+              >
+            </div>
           </section>
           <section class="settings-panel">
             <Database size={22} />
