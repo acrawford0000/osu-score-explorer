@@ -1,5 +1,6 @@
 pub mod lazer;
 pub mod library;
+pub mod replays;
 
 #[cfg(feature = "desktop")]
 mod desktop {
@@ -7,7 +8,7 @@ mod desktop {
     use std::{
         path::PathBuf,
         sync::{
-            Arc,
+            Arc, Mutex,
             atomic::{AtomicBool, Ordering},
         },
     };
@@ -15,6 +16,7 @@ mod desktop {
     struct Store {
         path: PathBuf,
         importing: Arc<AtomicBool>,
+        replay_lock: Arc<Mutex<()>>,
     }
     struct ImportGuard(Arc<AtomicBool>);
     impl Drop for ImportGuard {
@@ -23,6 +25,35 @@ mod desktop {
         }
     }
 
+    #[tauri::command]
+    async fn replay_availability(
+        ids: Vec<String>,
+        state: State<'_, Store>,
+    ) -> Result<crate::replays::Availability, String> {
+        let path = state.path.clone();
+        let lock = state.replay_lock.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|e| e.to_string())?;
+            let warning = crate::replays::refresh_lazer(&path).err();
+            crate::replays::availability(&path, &ids, warning)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    async fn export_replay(
+        id: String,
+        directory: String,
+        state: State<'_, Store>,
+    ) -> Result<String, String> {
+        let path = state.path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::replays::export(&path, &id, &PathBuf::from(directory))
+                .map(|p| p.to_string_lossy().to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
     #[tauri::command]
     async fn load_library(state: State<'_, Store>) -> Result<Library, String> {
         let path = state.path.clone();
@@ -90,6 +121,7 @@ mod desktop {
                 app.manage(Store {
                     path: directory.join("library.sqlite"),
                     importing: Arc::new(AtomicBool::new(false)),
+                    replay_lock: Arc::new(Mutex::new(())),
                 });
                 Ok(())
             })
@@ -97,7 +129,9 @@ mod desktop {
                 load_library,
                 import_stable,
                 import_lazer,
-                artwork
+                artwork,
+                replay_availability,
+                export_replay
             ])
             .run(tauri::generate_context!())
             .expect("Could not start Score Explorer");

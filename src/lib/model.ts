@@ -201,7 +201,9 @@ export function trends(
   const groups = new Map<string, Score[]>();
   for (const s of scores) {
     const key = s.date.slice(0, bucket === 'year' ? 4 : 7);
-    groups.set(key, [...(groups.get(key) || []), s]);
+    const group = groups.get(key);
+    if (group) group.push(s);
+    else groups.set(key, [s]);
   }
   const keys = [...groups.keys()].sort();
   const cursor = new Date(`${keys[0]}${bucket === 'year' ? '-01' : ''}-01T00:00:00Z`);

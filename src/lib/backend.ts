@@ -7,3 +7,10 @@ export const importStable = (root: string, songs: string | null, force = false) 
 export const artwork = (id: string) => invoke<string | null>('artwork', { id });
 export const importLazer = (root: string, force = false) =>
   invoke<Library>('import_lazer', { root, force });
+export const replayAvailability = (ids: string[]) =>
+  invoke<{ available: { id: string; filename: string }[]; warning: string | null }>(
+    'replay_availability',
+    { ids },
+  );
+export const exportReplay = (id: string, directory: string) =>
+  invoke<string>('export_replay', { id, directory });

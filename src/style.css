@@ -531,6 +531,37 @@ h1 {
   transform: translateY(-3px);
   border-color: #ee86b370;
 }
+.card-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.card-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.replay-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 10px;
+}
+.setting-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
 .card-art {
   height: 156px;
   position: relative;

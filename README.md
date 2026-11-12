@@ -15,6 +15,11 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 - Sort by PP, stars, accuracy, most recent, or potential FC PP gain.
 - See achieved combo alongside the map's maximum combo.
 - See hit counts on every card to understand exactly how a near-SS play fell short.
+- Search and refine your library while results update in the background.
+
+## Save your replays
+
+Export available local **stable and lazer replays** as `.osr` files from score cards or score details. Choose a default export folder in Settings, or let the app ask on your first export and remember your choice. Exporting another copy keeps existing files safe.
 
 ## Find your next goal
 
@@ -38,7 +43,7 @@ Keep the original Explorer theme, switch to light mode, or try **Bento, Serika D
 
 ## Project status
 
-This is an early desktop preview under active development. Replay discovery and export, saved views, retry lists, and more ways to compare attempts are on the [roadmap](TODO.md).
+This is an early desktop preview under active development. Online replay downloads, opening replays directly in osu!, saved views, retry lists, and more ways to compare attempts are on the [roadmap](TODO.md).
 
 [Development and running from source](docs/development.md)
 

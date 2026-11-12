@@ -44,7 +44,7 @@ struct Row {
     legacy_score: Option<u64>,
     accuracy: f64,
 }
-fn runtime() -> Result<PathBuf, String> {
+pub(crate) fn runtime() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let candidates = [
         exe.parent().unwrap().join("Score Explorer.runtime"),
@@ -53,7 +53,7 @@ fn runtime() -> Result<PathBuf, String> {
     ];
     candidates.into_iter().find(|p|p.join("node.exe").is_file()&&p.join("import-lazer.cjs").is_file()).ok_or_else(||"The lazer reader runtime is missing. Keep Score Explorer.runtime next to the application.".into())
 }
-fn snapshot(source: &Path, target: &Path) -> Result<(), String> {
+pub(crate) fn snapshot(source: &Path, target: &Path) -> Result<(), String> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(windows)]

@@ -12,12 +12,18 @@ try {
   for (const field of ['ID','Date','Ruleset','Statistics','IsLegacyScore','Mods','BeatmapHash']) {
     if (!schema?.properties[field]) throw Error(`Unsupported lazer schema ${version}: missing ${field}`);
   }
-  const bySha = new Map([...realm.objects('Beatmap')].map(m => [m.Hash, m]));
+  const replayOnly = process.argv[5] === '--replays';
+  const bySha = replayOnly ? new Map() : new Map([...realm.objects('Beatmap')].map(m => [m.Hash, m]));
   const filePath = hash => /^[a-f0-9]{64}$/i.test(hash || '') ? path.join(root, 'files', hash[0], hash.slice(0,2), hash) : null;
   const rows = [];
   // Lazer snapshots can contain both legacy PascalCase and newer API-style snake_case enums.
   for (const s of realm.objects('Score')) {
     if (s.DeletePending) continue;
+    if (replayOnly) {
+      const replay = [...s.Files].find(f => f.Filename?.toLowerCase().endsWith('.osr'));
+      rows.push({ id: `lazer:${s.ID}`, path: filePath(replay?.File?.Hash) });
+      continue;
+    }
     const m = s.BeatmapInfo && s.BeatmapInfo.Hash === s.BeatmapHash ? s.BeatmapInfo : bySha.get(s.BeatmapHash);
     const metadata = m?.Metadata;
     const background = [...(m?.BeatmapSet?.Files || [])].find(f => f.Filename?.replaceAll('\\','/').toLowerCase() === metadata?.BackgroundFile?.replaceAll('\\','/').toLowerCase());

@@ -23,6 +23,49 @@ fn main() {
         }
         return;
     }
+    if args[1] == "--replay-audit" {
+        let path = PathBuf::from(&args[2]);
+        let started = std::time::Instant::now();
+        score_explorer::replays::refresh_lazer(&path).expect("Index local replay references");
+        let l = score_explorer::library::load(&path).expect("Read cache");
+        for (label, source, native) in [
+            ("stable", "stable", false),
+            ("lazer legacy", "lazer", false),
+            ("lazer native", "lazer", true),
+        ] {
+            let mut scores: Vec<_> = l
+                .scores
+                .iter()
+                .filter(|s| s.source == source && s.gameplay_lazer == native)
+                .collect();
+            scores.sort_by(|a, b| a.date.cmp(&b.date));
+            if native {
+                scores.reverse();
+            }
+            let ids: Vec<_> = scores.iter().take(100).map(|s| s.id.clone()).collect();
+            let available = score_explorer::replays::availability(&path, &ids, None)
+                .expect("Check replay files");
+            println!(
+                "{label}: {} verified local replays among {} checked",
+                available.available.len(),
+                ids.len()
+            );
+            if let (Some(folder), Some(replay)) = (args.get(3), available.available.first()) {
+                let saved =
+                    score_explorer::replays::export(&path, &replay.id, &PathBuf::from(folder))
+                        .expect("Export replay");
+                println!(
+                    "{label}: exported {} bytes",
+                    std::fs::metadata(saved).unwrap().len()
+                );
+            }
+        }
+        println!(
+            "Replay audit completed in {} ms",
+            started.elapsed().as_millis()
+        );
+        return;
+    }
     if args[1] == "--lazer" {
         if args.len() < 4 {
             eprintln!("Usage: inspect-library --lazer <cache.sqlite> <lazer-folder>");

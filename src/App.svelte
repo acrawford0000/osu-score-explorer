@@ -23,23 +23,30 @@
     ChevronLeft,
     Check,
     Info,
+    Download,
   } from '@lucide/svelte';
   import Artwork from './lib/Artwork.svelte';
   import TrendChart from './lib/TrendChart.svelte';
   import {
     defaultFilters,
-    filterScores,
     modLabel,
     scoreMods,
     hitBreakdown,
-    trends,
     type Score,
     type Library,
     type Filters,
   } from './lib/model';
   import { demoScores } from './lib/demo';
-  import { isDesktop, loadLibrary, importStable, importLazer } from './lib/backend';
+  import {
+    isDesktop,
+    loadLibrary,
+    importStable,
+    importLazer,
+    replayAvailability,
+    exportReplay,
+  } from './lib/backend';
   import { themes } from './lib/themes';
+  import type { QueryResult } from './lib/query';
 
   function showDialog(node: HTMLDialogElement) {
     const previous = document.activeElement as HTMLElement | null;
@@ -62,9 +69,9 @@
   let view = $state<'cards' | 'table'>(read('sx-view', 'cards'));
   let section = $state<'explore' | 'trends' | 'settings'>('explore');
   let theme = $state(localStorage.getItem('sx-theme') || 'dark');
-  let scores = $state<Score[]>([]),
+  let scores = $state.raw<Score[]>([]),
     sample = $state(false),
-    library = $state<Library | null>(null);
+    library = $state.raw<Library | null>(null);
   let busy = $state(false),
     error = $state(''),
     message = $state(''),
@@ -73,6 +80,11 @@
   let root = $state(read('sx-root', 'E:\\Games\\osu!')),
     songs = $state(read('sx-songs', ''));
   let lazerRoot = $state(read('sx-lazer-root', ''));
+  let replayFolder = $state(read<string>('sx-replay-folder', ''));
+  let replayIds = $state.raw(new Set<string>());
+  let replayWarning = $state('');
+  let exporting = $state('');
+  let exportFeedback = $state<{ id: string; text: string } | null>(null);
   let selected = $state<Score | null>(null),
     page = $state(0);
   let metric = $state<'stars' | 'pp' | 'accuracy'>(read('sx-metric', 'stars')),
@@ -87,25 +99,105 @@
     { id: 'ss', label: 'SS scores', icon: Check },
     { id: 'comboChoke', label: 'Combo chokes', icon: Target },
   ];
-  let filtered = $derived(filterScores(scores, filters));
-  let visible = $derived(filtered.slice(page * size, (page + 1) * size));
+  let worker = $state.raw<Worker | null>(null);
+  let searching = $state(false);
+  let requestId = 0;
+  let result = $state.raw<QueryResult>({
+    requestId: 0,
+    total: 0,
+    ids: [],
+    maps: 0,
+    fcs: 0,
+    years: [],
+    points: [],
+  });
+  let byId = $derived(new Map(scores.map((s) => [s.id, s])));
+  let visible = $derived(
+    result.ids.flatMap((id) => {
+      const s = byId.get(id);
+      return s ? [s] : [];
+    }),
+  );
+  $effect(() => {
+    localStorage.setItem('sx-replay-folder', JSON.stringify(replayFolder));
+  });
+  $effect(() => {
+    const ids = [...new Set([...visible.map((s) => s.id), ...(selected ? [selected.id] : [])])];
+    if (!isDesktop || sample || !ids.length) {
+      replayIds = new Set();
+      return;
+    }
+    let active = true;
+    replayIds = new Set();
+    replayAvailability(ids)
+      .then((status) => {
+        if (!active) return;
+        replayIds = new Set(status.available.map((r) => r.id));
+        replayWarning = status.warning || '';
+      })
+      .catch((e) => {
+        if (active) replayWarning = String(e);
+      });
+    return () => {
+      active = false;
+    };
+  });
+  onMount(() => {
+    const background = new Worker(new URL('./lib/search.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    worker = background;
+    background.onmessage = (event: MessageEvent<QueryResult>) => {
+      if (event.data.requestId !== requestId) return;
+      result = event.data;
+      searching = false;
+    };
+    background.onerror = () => {
+      error = 'The search worker stopped. Reopen the application to retry.';
+      searching = false;
+    };
+    return () => background.terminate();
+  });
+  $effect(() => {
+    worker?.postMessage({ type: 'load', scores });
+  });
+  $effect(() => {
+    const background = worker;
+    const query = {
+      requestId: ++requestId,
+      filters: $state.snapshot(filters),
+      page,
+      size,
+      metric,
+      bucket,
+      unique,
+      progression: section === 'trends',
+    };
+    void scores;
+    if (!background) return;
+    searching = true;
+    // Coalesce typing; stale in-flight replies cannot replace newer results.
+    const timer = setTimeout(
+      () => background.postMessage({ type: 'query', query }),
+      filters.search ? 120 : 0,
+    );
+    return () => clearTimeout(timer);
+  });
   let players = $derived(
     [...new Set(scores.flatMap((s) => [s.player, ...(s.playerAliases || [])]))].sort(),
   );
   let mods = $derived([...new Set(scores.map((s) => scoreMods(s)))].sort());
   let currentPreset = $derived(presets.find((p) => p.id === filters.preset) || presets[0]);
-  let trendPoints = $derived(
-    filters.mode === '' || !filters.player ? [] : trends(filtered, metric, bucket, unique),
-  );
+  let trendPoints = $derived(result.points);
   let rated = $derived(scores.filter((s) => s.stars !== null).length);
-  let filteredDates = $derived(filtered.map((s) => s.date.slice(0, 4)).sort());
+  let filteredDates = $derived(result.years);
   let summary = $derived([
     { label: 'Imported scores', value: scores.length.toLocaleString() },
     {
       label: 'Beatmaps in view',
-      value: new Set(filtered.map((s) => s.mapHash)).size.toLocaleString(),
+      value: result.maps.toLocaleString(),
     },
-    { label: 'Full combos in view', value: filtered.filter((s) => s.fc).length.toLocaleString() },
+    { label: 'Full combos in view', value: result.fcs.toLocaleString() },
     { label: 'Years in view', value: new Set(filteredDates).size.toLocaleString() },
   ]);
   $effect(() => {
@@ -161,6 +253,36 @@
       scores.some((s) => s.player === library!.defaultPlayer)
     )
       filters.player = library.defaultPlayer;
+  }
+  async function chooseReplayFolder(): Promise<string | null> {
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const folder = await open({
+      directory: true,
+      multiple: false,
+      title: 'Choose where to save exported replays',
+      ...(replayFolder ? { defaultPath: replayFolder } : {}),
+    });
+    if (typeof folder !== 'string') return null;
+    replayFolder = folder;
+    return folder;
+  }
+  async function downloadReplay(score: Score) {
+    if (exporting) return;
+    exporting = score.id;
+    exportFeedback = null;
+    try {
+      const folder = replayFolder || (await chooseReplayFolder());
+      if (!folder) return;
+      const destination = await exportReplay(score.id, folder);
+      message = `Replay saved to ${destination}`;
+      exportFeedback = { id: score.id, text: message };
+      error = '';
+    } catch (e) {
+      error = String(e);
+      exportFeedback = { id: score.id, text: error };
+    } finally {
+      exporting = '';
+    }
   }
   async function choose(which: 'root' | 'songs' | 'lazer') {
     if (!isDesktop) return;
@@ -448,8 +570,9 @@
           </div>{/if}
         <div class="results-header">
           <span
-            ><strong>{number(filtered.length)}</strong>
-            {currentPreset.label.toLowerCase()}{#if filters.search}
+            ><strong>{number(result.total)}</strong>
+            {currentPreset.label.toLowerCase()}{#if searching}
+              · Updating results…{/if}{#if filters.search}
               matching “{filters.search}”{/if}</span
           ><span
             >{#if scores.length}{filteredDates[0] ?? '—'} — {filteredDates.at(-1) ?? '—'}<span
@@ -489,7 +612,11 @@
                 : 'Browser preview · native imports are available in the desktop app.'}</small
             >
           </div>
-        {:else if !filtered.length}<div class="empty-state">
+        {:else if !result.total && searching}<div class="empty-state">
+            <RefreshCw class="spin" size={24} />
+            <p>Finding your scores…</p>
+          </div>
+        {:else if !result.total}<div class="empty-state">
             <Search size={30} />
             <h2>No plays match these filters.</h2>
             <p>Try a wider date range or fewer filters.</p>
@@ -498,66 +625,74 @@
             >
           </div>
         {:else if view === 'cards'}<div class="score-grid">
-            {#each visible as score, i (score.id)}{@const hits = hitBreakdown(score)}<button
-                class="score-card"
-                onclick={() => (selected = score)}
-                ><div class="card-art">
-                  <Artwork
-                    id={score.id}
-                    available={score.hasArtwork}
-                    hue={210 + ((i * 37) % 130)}
-                  />
-                  <div class="card-shade"></div>
-                  <div class="card-top">
-                    <span class="stars"
-                      ><Star size={11} fill="currentColor" />{number(score.stars, 2)}</span
-                    ><span class="mod-badge">{scoreMods(score)}</span>
-                  </div>
-                  <div class="card-map">
-                    <span>{score.artist || 'Unknown artist'}</span>
-                    <h3>{score.title}</h3>
-                    <p>{score.difficulty}</p>
-                  </div>
-                </div>
-                <div class="card-body">
-                  <div class="card-primary">
-                    <span class="grade" class:fc={score.fc}
-                      >{score.ss
-                        ? 'SS'
-                        : score.fc
-                          ? 'FC'
-                          : score.misses
-                            ? `${score.misses}×`
-                            : '—'}</span
-                    >
-                    <div class="card-pp">{number(score.pp)}<small>pp</small></div>
-                    <div class="card-accuracy">
-                      {number(score.accuracy, 2)}<small>% accuracy</small>
+            {#each visible as score, i (score.id)}{@const hits = hitBreakdown(score)}
+              <article class="score-card">
+                <button class="card-open" onclick={() => (selected = score)}
+                  ><div class="card-art">
+                    <Artwork
+                      id={score.id}
+                      available={score.hasArtwork}
+                      hue={210 + ((i * 37) % 130)}
+                    />
+                    <div class="card-shade"></div>
+                    <div class="card-top">
+                      <span class="stars"
+                        ><Star size={11} fill="currentColor" />{number(score.stars, 2)}</span
+                      ><span class="mod-badge">{scoreMods(score)}</span>
+                    </div>
+                    <div class="card-map">
+                      <span>{score.artist || 'Unknown artist'}</span>
+                      <h3>{score.title}</h3>
+                      <p>{score.difficulty}</p>
                     </div>
                   </div>
-                  <div class="card-hits" title={hits.label} aria-label={hits.label}>
-                    {hits.text}
-                  </div>
-                  <div class="card-secondary">
-                    <span
-                      >{score.misses === 0
-                        ? 'No misses'
-                        : `${score.misses} miss${score.misses === 1 ? '' : 'es'}`}<span
-                        class="middot">·</span
-                      >{number(score.combo)} / {number(score.maxCombo)}× combo</span
-                    >{#if !score.fc && score.fcPp !== null}<span class="fc-estimate"
-                        >{number(score.fcPp)} pp if FC</span
-                      >{:else}<span>{score.date.slice(0, 10)}</span>{/if}
-                  </div>
-                </div>
+                  <div class="card-body">
+                    <div class="card-primary">
+                      <span class="grade" class:fc={score.fc}
+                        >{score.ss
+                          ? 'SS'
+                          : score.fc
+                            ? 'FC'
+                            : score.misses
+                              ? `${score.misses}×`
+                              : '—'}</span
+                      >
+                      <div class="card-pp">{number(score.pp)}<small>pp</small></div>
+                      <div class="card-accuracy">
+                        {number(score.accuracy, 2)}<small>% accuracy</small>
+                      </div>
+                    </div>
+                    <div class="card-hits" title={hits.label} aria-label={hits.label}>
+                      {hits.text}
+                    </div>
+                    <div class="card-secondary">
+                      <span
+                        >{score.misses === 0
+                          ? 'No misses'
+                          : `${score.misses} miss${score.misses === 1 ? '' : 'es'}`}<span
+                          class="middot">·</span
+                        >{number(score.combo)} / {number(score.maxCombo)}× combo</span
+                      >{#if !score.fc && score.fcPp !== null}<span class="fc-estimate"
+                          >{number(score.fcPp)} pp if FC</span
+                        >{:else}<span>{score.date.slice(0, 10)}</span>{/if}
+                    </div>
+                  </div></button
+                >
                 <div class="card-footer">
                   <span
                     >{(score.sources?.length ? score.sources : [score.source]).join(' + ')}<span
                       class="middot">·</span
                     >{score.player}</span
-                  ><ArrowUpRight size={14} />
-                </div></button
-              >{/each}
+                  >{#if replayIds.has(score.id)}<button
+                      class="replay-button"
+                      disabled={!!exporting}
+                      title="Export local replay (.osr)"
+                      aria-label={`Export replay for ${score.title}`}
+                      onclick={() => downloadReplay(score)}
+                      ><Download size={13} />{exporting === score.id ? 'Saving…' : 'Replay'}</button
+                    >{:else}<ArrowUpRight size={14} />{/if}
+                </div>
+              </article>{/each}
           </div>
         {:else}<div class="table-wrap">
             <table>
@@ -586,18 +721,18 @@
               >
             </table>
           </div>{/if}
-        {#if filtered.length > size}<div class="pagination">
+        {#if result.total > size}<div class="pagination">
             <span
-              >Showing {page * size + 1}–{Math.min((page + 1) * size, filtered.length)} of {number(
-                filtered.length,
+              >Showing {page * size + 1}–{Math.min((page + 1) * size, result.total)} of {number(
+                result.total,
               )}</span
             >
             <div>
               <button class="button small" disabled={page === 0} onclick={() => page--}
                 ><ChevronLeft size={15} />Previous</button
-              ><span>{page + 1} / {Math.ceil(filtered.length / size)}</span><button
+              ><span>{page + 1} / {Math.ceil(result.total / size)}</span><button
                 class="button small"
-                disabled={(page + 1) * size >= filtered.length}
+                disabled={(page + 1) * size >= result.total}
                 onclick={() => page++}>Next<ChevronRight size={15} /></button
               >
             </div>
@@ -656,7 +791,7 @@
                     ? 'Average PP'
                     : 'Average accuracy'}
               </h2>
-              <p>Uses your current explorer filters · {number(filtered.length)} retained plays</p>
+              <p>Uses your current explorer filters · {number(result.total)} retained plays</p>
             </div>
             <span class="sample-badge"
               >{sample ? 'SAMPLE VALUES' : library?.engine || 'NO LIBRARY'}</span
@@ -712,6 +847,30 @@
           </div>
         </div>
         <div class="settings-grid">
+          <section class="settings-panel">
+            <div class="panel-heading">
+              <h2>Replay exports</h2>
+              <Download size={19} />
+            </div>
+            <p>
+              Save local stable and lazer replays as .osr files. Choose a default folder, or pick
+              one the first time you export.
+            </p>
+            <label
+              >Default export folder<input
+                bind:value={replayFolder}
+                placeholder="Ask on first export"
+              /></label
+            >
+            <div class="setting-actions">
+              <button class="button" disabled={!isDesktop} onclick={chooseReplayFolder}
+                ><FolderOpen size={15} />Choose folder</button
+              ><button class="button secondary" onclick={() => (replayFolder = '')}
+                >Clear default</button
+              >
+            </div>
+            {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
+          </section>
           <section class="settings-panel">
             <FolderOpen size={22} />
             <h2>Your sources</h2>
@@ -948,6 +1107,14 @@
       </div>
       <div class="detail-content">
         <div class="detail-pills">
+          {#if replayIds.has(selected.id)}<button
+              class="button small"
+              disabled={!!exporting}
+              onclick={() => selected && downloadReplay(selected)}
+              ><Download size={14} />{exporting === selected.id
+                ? 'Saving…'
+                : 'Export replay (.osr)'}</button
+            >{/if}
           <span class="mod-badge">{scoreMods(selected)}</span><span class="stars"
             >★ {number(selected.stars, 2)}</span
           >{#if selected.fc}<span class="sample-badge">FULL COMBO</span>{/if}<span class="muted"
@@ -959,6 +1126,7 @@
           <div><span>PP if FC</span><strong class="pink">{number(selected.fcPp, 1)}</strong></div>
           <div><span>Accuracy</span><strong>{number(selected.accuracy, 2)}%</strong></div>
         </div>
+        {#if exportFeedback?.id === selected.id}<p role="status">{exportFeedback.text}</p>{/if}
         <dl class="score-facts">
           <dt>Combo</dt>
           <dd>{number(selected.combo)} / {number(selected.maxCombo)}</dd>
