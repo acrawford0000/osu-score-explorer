@@ -1,0 +1,215 @@
+/* Palette references: Monkeytype theme constants. Application surfaces are adapted for legibility. */
+:root {
+  --scheme: dark;
+}
+:root[data-theme='light'] {
+  --scheme: light;
+}
+:root[data-theme='bento'] {
+  --bg: #2d394d;
+  --sidebar: #263041;
+  --panel: #303e54;
+  --panel-hover: #3a4b65;
+  --border: #455870;
+  --text: #fffaf8;
+  --muted: #b0c2d2;
+  --faint: #8da6ba;
+  --accent: #ff7a90;
+  --accent-wash: #ff7a9018;
+  --green: #a6d7b9;
+  --input: #263041;
+}
+:root[data-theme='serika'] {
+  --bg: #323437;
+  --sidebar: #2c2e31;
+  --panel: #383b3f;
+  --panel-hover: #42464a;
+  --border: #505359;
+  --text: #d1d0c5;
+  --muted: #b2b2a8;
+  --faint: #95988f;
+  --accent: #e2b714;
+  --accent-wash: #e2b71416;
+  --green: #9cc39b;
+  --input: #2c2e31;
+}
+:root[data-theme='nord'] {
+  --bg: #242933;
+  --sidebar: #202630;
+  --panel: #2e3440;
+  --panel-hover: #3b4252;
+  --border: #434c5e;
+  --text: #eceff4;
+  --muted: #c1c9d8;
+  --faint: #929aaa;
+  --accent: #88c0d0;
+  --accent-wash: #88c0d018;
+  --green: #a3be8c;
+  --input: #242933;
+}
+:root[data-theme='catppuccin'] {
+  --bg: #1e1e2e;
+  --sidebar: #181825;
+  --panel: #252537;
+  --panel-hover: #313244;
+  --border: #45475a;
+  --text: #cdd6f4;
+  --muted: #bac2de;
+  --faint: #9399b2;
+  --accent: #cba6f7;
+  --accent-wash: #cba6f716;
+  --green: #a6e3a1;
+  --input: #181825;
+}
+:root[data-theme='paper'] {
+  color-scheme: light;
+  --scheme: light;
+  --bg: #eee;
+  --sidebar: #e3e3e3;
+  --panel: #f8f8f8;
+  --panel-hover: #e4e4e4;
+  --border: #cecece;
+  --text: #303030;
+  --muted: #666;
+  --faint: #7b7b7b;
+  --accent: #444;
+  --accent-wash: #4444440d;
+  --green: #3b7a59;
+  --input: #f3f3f3;
+}
+select {
+  color-scheme: var(--scheme);
+  background-color: var(--input);
+  color: var(--text);
+}
+select option,
+select optgroup {
+  background-color: var(--panel);
+  color: var(--text);
+}
+select option:checked {
+  background-color: var(--accent);
+  color: var(--bg);
+}
+.source-toggles {
+  display: inline-flex;
+  gap: 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.source-toggles legend {
+  font-size: 9px;
+  color: var(--faint);
+  padding: 0 5px;
+}
+.source-toggles label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  cursor: pointer;
+}
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+.ss-filter {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 11px;
+  margin: 10px 0 18px;
+  color: var(--muted);
+}
+.ss-filter label span {
+  font-size: 10px;
+  margin-left: 6px;
+}
+.ss-filter input {
+  width: 90px;
+  font-size: 11px;
+  padding: 7px 10px;
+}
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.theme-choice {
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  font-size: 11px;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.theme-choice.chosen {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+.theme-swatches {
+  display: flex;
+  gap: 2px;
+}
+.theme-swatches i {
+  display: block;
+  width: 12px;
+  height: 18px;
+  border: 1px solid #ffffff20;
+  border-radius: 3px;
+}
+.theme-credit a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.chart-wrap {
+  position: relative;
+}
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, -110%);
+  background: var(--sidebar);
+  border: 1px solid var(--accent);
+  box-shadow: 0 6px 28px #0005;
+  padding: 11px 14px;
+  border-radius: 8px;
+  min-width: 215px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+.chart-tooltip strong {
+  font-weight: 500;
+  color: var(--muted);
+}
+.chart-tooltip b {
+  font-size: 17px;
+  color: var(--accent);
+}
+.chart-tooltip span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.chart-wrap g[role='button'] {
+  cursor: crosshair;
+}
+.chart-wrap g[role='button']:focus {
+  outline: none;
+}
+.chart-wrap g[role='button']:focus circle:last-child {
+  stroke: var(--text);
+  stroke-width: 2;
+}
+.card-secondary {
+  flex-wrap: wrap;
+  row-gap: 7px;
+}
