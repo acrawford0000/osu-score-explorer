@@ -387,11 +387,13 @@ pub fn import_scan(
     let started = std::time::Instant::now();
     let source = root.join("scores.db");
     let before = stamp(&source)?;
+    let catalog_path = root.join("osu!.db");
+    let catalog_stamp = stamp(&catalog_path).unwrap_or_else(|_| "missing".into());
     let song_root = songs
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("Songs"));
     let source_key = format!(
-        "{ENGINE}|import-{IMPORT_SCHEMA}|{before}|{}",
+        "{ENGINE}|import-{IMPORT_SCHEMA}|{before}|catalog:{catalog_stamp}|{}",
         song_root.display()
     );
     let mut c = db(path)?;
@@ -404,7 +406,7 @@ pub fn import_scan(
     let index = crate::maps::refresh(&mut c, root, &song_root, previous_generation, force)?;
     let source_key = format!("{source_key}|map-index-1:{}", index.generation);
     let configuration = format!(
-        "{}|{}",
+        "{}|{}|catalog:{catalog_stamp}",
         root.canonicalize().map_err(|e| e.to_string())?.display(),
         song_root.display()
     );
@@ -481,7 +483,7 @@ pub fn import_scan(
             })
         });
     let listing = if needs_maps {
-        match osu_db::Listing::from_file(root.join("osu!.db")) {
+        match osu_db::Listing::from_file(&catalog_path) {
             Ok(l) => Some(l),
             Err(e) => {
                 if index.maps.is_empty() {
@@ -493,6 +495,11 @@ pub fn import_scan(
     } else {
         None
     };
+    if stamp(&catalog_path).unwrap_or_else(|_| "missing".into()) != catalog_stamp {
+        return Err(
+            "osu!.db changed while being read. Retry after the file has finished copying.".into(),
+        );
+    }
     let maps: HashMap<_, _> = listing
         .as_ref()
         .map(|l| {
@@ -923,6 +930,83 @@ mod tests {
         let unchanged = import(&cache, &folder, None).unwrap();
         assert!(unchanged.source_unchanged);
         assert_eq!(unchanged.calculated, 0);
+        // Replacing only osu!.db must repair existing rows, even with unchanged scores.db.
+        let mut catalog = osu_db::Listing {
+            version: 20200101,
+            folder_count: 0,
+            unban_date: None,
+            player_name: None,
+            beatmaps: vec![],
+            user_permissions: 1,
+        };
+        catalog.save(folder.join("osu!.db")).unwrap();
+        assert!(!import(&cache, &folder, None).unwrap().source_unchanged);
+        let time = chrono::DateTime::from_timestamp(1500000000, 0).unwrap();
+        catalog.beatmaps.push(osu_db::listing::Beatmap {
+            artist_ascii: Some("Catalog artist".into()),
+            artist_unicode: None,
+            title_ascii: Some("Recovered title".into()),
+            title_unicode: None,
+            creator: Some("Mapper".into()),
+            difficulty_name: Some("Difficulty".into()),
+            audio: None,
+            hash: Some("test-map".into()),
+            file_name: None,
+            status: osu_db::listing::RankedStatus::Unknown,
+            hitcircle_count: 0,
+            slider_count: 0,
+            spinner_count: 0,
+            last_modified: time,
+            approach_rate: 5.0,
+            circle_size: 4.0,
+            hp_drain: 5.0,
+            overall_difficulty: 5.0,
+            slider_velocity: 1.4,
+            std_ratings: vec![],
+            taiko_ratings: vec![],
+            ctb_ratings: vec![],
+            mania_ratings: vec![],
+            drain_time: 0,
+            total_time: 0,
+            preview_time: 0,
+            timing_points: vec![],
+            beatmap_id: 1,
+            beatmapset_id: 1,
+            thread_id: 0,
+            std_grade: osu_db::listing::Grade::Unplayed,
+            taiko_grade: osu_db::listing::Grade::Unplayed,
+            ctb_grade: osu_db::listing::Grade::Unplayed,
+            mania_grade: osu_db::listing::Grade::Unplayed,
+            local_beatmap_offset: 0,
+            stack_leniency: 0.7,
+            mode: osu_db::Mode::Standard,
+            song_source: None,
+            tags: None,
+            online_offset: 0,
+            title_font: None,
+            last_played: None,
+            is_osz2: false,
+            folder_name: None,
+            last_online_check: time,
+            ignore_sounds: false,
+            ignore_skin: false,
+            disable_storyboard: false,
+            disable_video: false,
+            visual_override: false,
+            mysterious_short: None,
+            mysterious_last_modified: 0,
+            mania_scroll_speed: 0,
+        });
+        catalog.save(folder.join("osu!.db")).unwrap();
+        let repaired = import(&cache, &folder, None).unwrap();
+        assert!(!repaired.source_unchanged);
+        assert_eq!(repaired.scores[0].title, "Recovered title");
+        assert_eq!(repaired.scores[0].artist, "Catalog artist");
+        assert!(
+            repaired.scores[0].pp.is_none(),
+            "Metadata must not invent PP without a map file"
+        );
+        assert!(import(&cache, &folder, None).unwrap().source_unchanged);
         let mut second = first.clone();
         second.timestamp += chrono::Duration::seconds(5);
         second.replay_hash = Some("second-replay".into());

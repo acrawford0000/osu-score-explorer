@@ -5,6 +5,46 @@ fn main() {
         eprintln!("Usage: inspect-library <app-owned-cache.sqlite> <stable-folder> [songs-folder]");
         std::process::exit(2);
     }
+    if args[1] == "--map-audit" {
+        let root = PathBuf::from(&args[2]);
+        let listing = osu_db::Listing::from_file(root.join("osu!.db")).expect("Read map catalog");
+        let maps: std::collections::HashMap<_, _> = listing
+            .beatmaps
+            .iter()
+            .filter_map(|m| m.hash.as_deref().map(|h| (h.to_ascii_lowercase(), m)))
+            .collect();
+        println!(
+            "Catalog entries: {}; unique hashes: {}",
+            listing.beatmaps.len(),
+            maps.len()
+        );
+        if let Ok(scores) = osu_db::ScoreList::from_file(root.join("scores.db")) {
+            let hashes: std::collections::HashSet<_> = scores
+                .beatmaps
+                .iter()
+                .filter_map(|m| m.hash.as_deref())
+                .collect();
+            println!(
+                "Score map hashes: {}; matched in catalog: {}",
+                hashes.len(),
+                hashes
+                    .iter()
+                    .filter(|h| maps.contains_key(&h.to_ascii_lowercase()))
+                    .count()
+            );
+        }
+        for hash in args.iter().skip(3) {
+            if let Some(m) = maps.get(&hash.to_ascii_lowercase()) {
+                println!(
+                    "{hash}: {:?} / {:?}; folder {:?}; file {:?}",
+                    m.title_ascii, m.difficulty_name, m.folder_name, m.file_name
+                );
+            } else {
+                println!("{hash}: absent from catalog");
+            }
+        }
+        return;
+    }
     if args[1] == "--profile" {
         if args.len() < 4 {
             eprintln!("Usage: inspect-library --profile <stable-folder> <app-cache.sqlite>");

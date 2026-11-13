@@ -81,6 +81,8 @@ Use `?audio=missing` or `?audio=hang` on the browser fixture to exercise missing
 
 Stable imports match exact MD5 revisions across every configured stable Songs folder and indexed lazer file store, including standalone score archives without their own beatmap catalog. The first scan indexes local `.osu` files; later scans reuse unchanged file stamps. Only hashes, metadata, and validated media paths are cached. Per-source index generations let an ordinary rescan repair previously unmatched scores without recalculating existing PP results. Removed files retain descriptive metadata but are never used for calculations or playback.
 
+The sibling `osu!.db` catalog has its own fingerprint in each stable source configuration. Adding, replacing, or removing it refreshes descriptive metadata even when `scores.db` is unchanged, while reusing cached calculations. A catalog can identify a score's song and difficulty without containing the actual `.osu` file needed for PP calculations or any audio/artwork. `inspect-library --map-audit <stable-folder> [hashes...]` reports score-to-catalog coverage and selected exact-revision matches without modifying game files.
+
 ## Current limitations
 
 Some unsupported mod settings or incomplete/missing map revisions cannot be recalculated. Combined identity checks deliberately leave ambiguous records separate. The frontend and worker retain score summaries in memory; indexed SQLite queries remain an option for much larger libraries. Online replay fetching and direct launch into osu! are not implemented.

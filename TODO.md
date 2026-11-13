@@ -29,6 +29,7 @@
 - [x] Play installed map audio from the beginning from score details.
 - [x] Show a clear message for missing music, limit lookup wait time, and ignore outdated playback requests.
 - [x] Match imported scores against exact beatmap revisions across connected libraries, with a cached file index.
+- [x] Refresh unmatched score metadata when a beatmap catalog is added or replaced, even if the score database is unchanged.
 - [x] Provide compact sidebar playback, expanded seek/volume controls, and a draggable in-app player.
 
 ## Calculation speed and responsiveness
