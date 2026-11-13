@@ -75,7 +75,12 @@ Object.assign(window, {
         report();
         return sources;
       }
-      if (command === 'audio_track') return silentAudio;
+      if (command === 'audio_track') {
+        const behavior = new URLSearchParams(location.search).get('audio');
+        if (behavior === 'missing') return null;
+        if (behavior === 'hang') return new Promise(() => {});
+        return silentAudio;
+      }
       if (command === 'replay_availability')
         return {
           available: (args.ids as string[]).map((id) => ({ id, filename: 'sample.osr' })),

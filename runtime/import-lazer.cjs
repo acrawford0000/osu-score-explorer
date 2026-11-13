@@ -44,7 +44,14 @@ try {
     const stored = filePath(file?.File?.Hash);
     return stored ? [{ hash: m.MD5Hash || m.Hash, path: stored }] : [];
   }) : [];
-  fs.writeFileSync(output, JSON.stringify({ schema: version, rows, audio }));
+  const audioByHash = new Map(audio.map(a => [a.hash, a.path]));
+  const maps = replayOnly ? [...realm.objects('Beatmap')].flatMap(m => {
+    const stored = filePath(m.Hash);
+    const name = m.Metadata?.BackgroundFile?.replaceAll('\\','/').toLowerCase();
+    const image = [...(m.BeatmapSet?.Files || [])].find(f => f.Filename?.replaceAll('\\','/').toLowerCase() === name);
+    return stored ? [{ path: stored, audio: audioByHash.get(m.MD5Hash || m.Hash) || null, background: filePath(image?.File?.Hash) }] : [];
+  }) : [];
+  fs.writeFileSync(output, JSON.stringify({ schema: version, rows, audio, maps }));
   realm.close();
   process.exit(0);
 } catch (e) {

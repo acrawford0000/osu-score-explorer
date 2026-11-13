@@ -8,7 +8,7 @@ use std::{
 };
 
 pub const ENGINE: &str = "rosu-pp 4.0.1 / stable / policy-2";
-const IMPORT_SCHEMA: u8 = 2;
+const IMPORT_SCHEMA: u8 = 3;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Score {
@@ -93,6 +93,7 @@ pub(crate) fn db(path: &Path) -> Result<Connection, String> {
     c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS scores(id TEXT PRIMARY KEY, data TEXT NOT NULL, artwork TEXT); CREATE TABLE IF NOT EXISTS calculations(key TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, data TEXT NOT NULL);").map_err(|e|e.to_string())?;
     c.execute_batch("CREATE TABLE IF NOT EXISTS score_links(alias_id TEXT PRIMARY KEY,canonical_id TEXT NOT NULL); CREATE INDEX IF NOT EXISTS links_canonical ON score_links(canonical_id);").map_err(|e|e.to_string())?;
     c.execute_batch("CREATE TABLE IF NOT EXISTS score_artwork(id TEXT NOT NULL,source_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,source_key));").map_err(|e|e.to_string())?;
+    crate::maps::schema(&c)?;
     if crate::sources::value(&c, "multi_artwork").is_none() {
         c.execute_batch("BEGIN; INSERT OR IGNORE INTO score_artwork SELECT id,'legacy:'||artwork,artwork FROM scores WHERE artwork IS NOT NULL; INSERT OR REPLACE INTO metadata VALUES('multi_artwork','1'); COMMIT;").map_err(|e|e.to_string())?;
     }
@@ -395,6 +396,13 @@ pub fn import_scan(
     );
     let mut c = db(path)?;
     let install = crate::sources::scope(&c, "stable", root)?;
+    let previous_generation =
+        crate::sources::value(&c, &format!("stable_map_generation:{install}"))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+    let media_warning = crate::replays::refresh_lazer(path).err();
+    let index = crate::maps::refresh(&mut c, root, &song_root, previous_generation, force)?;
+    let source_key = format!("{source_key}|map-index-1:{}", index.generation);
     let configuration = format!(
         "{}|{}",
         root.canonicalize().map_err(|e| e.to_string())?.display(),
@@ -438,7 +446,10 @@ pub fn import_scan(
     // The selected parser reads immutable snapshots in memory and never saves to game files.
     let list = osu_db::ScoreList::from_bytes(&score_bytes)
         .map_err(|e| format!("Unsupported scores.db: {e}"))?;
-    let mut warnings = Vec::new();
+    let mut warnings = index.warnings.clone();
+    if let Some(warning) = media_warning {
+        warnings.push(warning);
+    }
     let (known, existing): (HashSet<String>, HashSet<String>) = {
         let mut q = c.prepare("SELECT id, json_extract(data,'$.calculationVersion')=?1 AND json_extract(data,'$.recordVersion')=?2 FROM scores").map_err(|e|e.to_string())?;
         let rows = q
@@ -473,9 +484,9 @@ pub fn import_scan(
         match osu_db::Listing::from_file(root.join("osu!.db")) {
             Ok(l) => Some(l),
             Err(e) => {
-                warnings.push(format!(
-                    "Beatmap metadata could not be read: {e}. Scores are retained."
-                ));
+                if index.maps.is_empty() {
+                    warnings.push(format!("No shared beatmaps were found. Configure a Songs folder or another game library. Metadata lookup: {e}"));
+                }
                 None
             }
         }
@@ -525,11 +536,25 @@ pub fn import_scan(
             if !seen.insert(id.clone()) {
                 continue;
             }
-            if !force && known.contains(&id) {
+            if !force && known.contains(&id) && !index.changed.contains(&hash.to_ascii_lowercase())
+            {
                 unchanged += 1;
                 continue;
             }
             let m = maps.get(hash.as_str()).copied();
+            let shared = index.maps.get(&hash.to_ascii_lowercase());
+            let metadata = shared.and_then(|maps| maps.first());
+            let previous: Option<Score> =
+                if metadata.is_none() && m.is_none() && existing.contains(&id) {
+                    tx.query_row("SELECT data FROM scores WHERE id=?1", [&id], |r| {
+                        r.get::<_, String>(0)
+                    })
+                    .optional()
+                    .map_err(|e| e.to_string())?
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                } else {
+                    None
+                };
             let accuracy = accuracy(
                 mode,
                 r.count_300.into(),
@@ -548,19 +573,37 @@ pub fn import_scan(
                     .unwrap_or_else(|| "Unknown player".into()),
                 date: timestamp,
                 mode,
-                title: m
-                    .and_then(|m| {
-                        m.title_unicode
-                            .clone()
-                            .filter(|s| !s.is_empty())
-                            .or_else(|| m.title_ascii.clone())
+                title: metadata
+                    .filter(|m| !m.title.is_empty())
+                    .map(|m| m.title.clone())
+                    .or_else(|| {
+                        m.and_then(|m| {
+                            m.title_unicode
+                                .clone()
+                                .filter(|s| !s.is_empty())
+                                .or_else(|| m.title_ascii.clone())
+                        })
                     })
+                    .or_else(|| previous.as_ref().map(|s| s.title.clone()))
                     .unwrap_or_else(|| "Unmatched beatmap".into()),
-                artist: m.and_then(|m| m.artist_ascii.clone()).unwrap_or_default(),
-                difficulty: m
-                    .and_then(|m| m.difficulty_name.clone())
+                artist: metadata
+                    .filter(|m| !m.artist.is_empty())
+                    .map(|m| m.artist.clone())
+                    .or_else(|| m.and_then(|m| m.artist_ascii.clone()))
+                    .or_else(|| previous.as_ref().map(|s| s.artist.clone()))
+                    .unwrap_or_default(),
+                difficulty: metadata
+                    .filter(|m| !m.difficulty.is_empty())
+                    .map(|m| m.difficulty.clone())
+                    .or_else(|| m.and_then(|m| m.difficulty_name.clone()))
+                    .or_else(|| previous.as_ref().map(|s| s.difficulty.clone()))
                     .unwrap_or_else(|| hash.clone()),
-                mapper: m.and_then(|m| m.creator.clone()).unwrap_or_default(),
+                mapper: metadata
+                    .filter(|m| !m.mapper.is_empty())
+                    .map(|m| m.mapper.clone())
+                    .or_else(|| m.and_then(|m| m.creator.clone()))
+                    .or_else(|| previous.as_ref().map(|s| s.mapper.clone()))
+                    .unwrap_or_default(),
                 mods: r.mods.bits(),
                 n300: r.count_300.into(),
                 n100: r.count_100.into(),
@@ -583,7 +626,7 @@ pub fn import_scan(
                 pp: None,
                 fc_pp: None,
                 source: "stable".into(),
-                status: "Map file unavailable".into(),
+                status: "Exact beatmap revision not found in configured libraries".into(),
                 has_artwork: false,
                 sources: vec!["stable".into()],
                 player_id: None,
@@ -604,21 +647,36 @@ pub fn import_scan(
                 .map_err(|e| e.to_string())?;
             let mut calc: Option<Calculation> = cached.and_then(|x| serde_json::from_str(&x).ok());
             if !loaded.contains_key(&hash) {
-                let entry = m
-                    .and_then(|m| {
-                        Some(PathBuf::from(m.folder_name.as_ref()?).join(m.file_name.as_ref()?))
-                    })
-                    .and_then(|relative| safe_path(&song_root, &relative))
-                    .and_then(|file| {
-                        let bytes = fs::read(&file).ok()?;
-                        if format!("{:x}", md5::compute(&bytes)) != hash {
-                            return None;
+                let mut candidates = Vec::new();
+                if let Some(maps) = shared {
+                    for map in maps {
+                        if !map.path.is_empty() {
+                            candidates.push((
+                                PathBuf::from(&map.root),
+                                PathBuf::from(&map.path),
+                                map.background.clone(),
+                            ));
                         }
-                        let text = String::from_utf8_lossy(&bytes);
-                        let image = background(&file, &text);
-                        let map = rosu_pp::Beatmap::from_bytes(&bytes).ok()?;
-                        Some((map, hash.clone(), image))
-                    });
+                    }
+                }
+                if let Some(map) = m
+                    && let (Some(folder), Some(file)) = (&map.folder_name, &map.file_name)
+                {
+                    candidates.push((song_root.clone(), song_root.join(folder).join(file), None));
+                }
+                let entry = candidates.into_iter().find_map(|(base, file, image)| {
+                    let file = crate::maps::safe_file(&base, &file)?;
+                    let bytes = fs::read(&file).ok()?;
+                    if !format!("{:x}", md5::compute(&bytes)).eq_ignore_ascii_case(&hash) {
+                        return None;
+                    }
+                    let text = String::from_utf8_lossy(&bytes);
+                    let image = image
+                        .and_then(|p| crate::maps::safe_file(&base, Path::new(&p)))
+                        .or_else(|| background(&file, &text));
+                    let map = rosu_pp::Beatmap::from_bytes(&bytes).ok()?;
+                    Some((map, hash.clone(), image))
+                });
                 loaded.insert(hash.clone(), entry);
             }
             let entry = loaded.get(&hash).and_then(Option::as_ref);
@@ -719,6 +777,14 @@ pub fn import_scan(
         .map_err(|e| e.to_string())?;
     }
     let now = chrono::Utc::now().to_rfc3339();
+    tx.execute(
+        "INSERT OR REPLACE INTO metadata VALUES(?1,?2)",
+        params![
+            format!("stable_map_generation:{install}"),
+            index.generation.to_string()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     crate::sources::remember(&tx, "stable", root, songs)?;
     for (field, data) in [("stamp", &source_key), ("configuration", &configuration)] {
         tx.execute(
@@ -753,20 +819,29 @@ pub fn import_scan(
 }
 pub fn artwork(path: &Path, id: &str) -> Result<Option<String>, String> {
     let c = db(path)?;
-    let mut q=c.prepare("SELECT artwork FROM scores WHERE (id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1)) AND artwork IS NOT NULL UNION SELECT path FROM score_artwork WHERE id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1)").map_err(|e|e.to_string())?;
+    let mut q=c.prepare("SELECT artwork,NULL FROM scores WHERE (id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1)) AND artwork IS NOT NULL UNION SELECT path,NULL FROM score_artwork WHERE id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1) UNION SELECT json_extract(data,'$.background'),root FROM beatmap_files WHERE present=1 AND json_extract(data,'$.background') IS NOT NULL AND hash IN (SELECT lower(json_extract(data,'$.mapHash')) FROM scores WHERE id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1))").map_err(|e|e.to_string())?;
     let files = q
-        .query_map([id], |r| r.get::<_, String>(0))
+        .query_map([id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })
         .map_err(|e| e.to_string())?;
     for file in files {
-        let file = file.map_err(|e| e.to_string())?;
-        let p = Path::new(&file);
-        if fs::metadata(p)
+        let (file, root) = file.map_err(|e| e.to_string())?;
+        let p = if let Some(root) = root {
+            let Some(p) = crate::maps::safe_file(Path::new(&root), Path::new(&file)) else {
+                continue;
+            };
+            p
+        } else {
+            PathBuf::from(file)
+        };
+        if fs::metadata(&p)
             .map(|m| m.len() > 20_000_000)
             .unwrap_or(true)
         {
             continue;
         }
-        let Ok(bytes) = fs::read(p) else {
+        let Ok(bytes) = fs::read(&p) else {
             continue;
         };
         let mime = if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {

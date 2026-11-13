@@ -71,9 +71,15 @@ For a 30,720-score browser UI fixture, open `/tests/preview.html` on the dev ser
 
 ## Local music playback
 
-Score details resolve audio across configured libraries in blocking tasks. Stable uses map metadata and each install's Songs root; lazer audio references share the source-fingerprinted read-only media index. Paths must resolve inside the appropriate Songs/file-store root. Only the resolved file is granted access through Tauri's asset protocol, which supports ranged streaming for seeking. The interface retains one audio element across views, starts at time zero, and stores volume locally. Floating controls stay within the application; there is no separate OS window or online audio fetch.
+Score details resolve audio across configured libraries in blocking tasks, using a read-only cache connection. Playback requests never refresh the lazer snapshot or wait for its replay-index lock. Missing files return an unavailable message; the interface stops waiting after eight seconds and ignores late replies after a timeout or a change of score. Stable uses the shared beatmap index, with legacy catalog lookup only before an index exists; lazer audio references share the source-fingerprinted read-only media index. Paths must resolve inside the appropriate Songs/file-store root. Only the resolved file is granted access through Tauri's asset protocol, which supports ranged streaming for seeking. The interface retains one audio element across views, starts at time zero, and stores volume locally. Floating controls stay within the application; there is no separate OS window or online audio fetch.
 
 The browser fixture provides a generated silent WAV for playback, seek, float/dock, and drag checks. `inspect-library --audio-audit <app-cache.sqlite>` checks installed audio resolution without playing music.
+
+Use `?audio=missing` or `?audio=hang` on the browser fixture to exercise missing-file feedback and timeout recovery.
+
+## Shared beatmap index
+
+Stable imports match exact MD5 revisions across every configured stable Songs folder and indexed lazer file store, including standalone score archives without their own beatmap catalog. The first scan indexes local `.osu` files; later scans reuse unchanged file stamps. Only hashes, metadata, and validated media paths are cached. Per-source index generations let an ordinary rescan repair previously unmatched scores without recalculating existing PP results. Removed files retain descriptive metadata but are never used for calculations or playback.
 
 ## Current limitations
 

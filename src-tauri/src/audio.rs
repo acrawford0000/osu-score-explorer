@@ -1,5 +1,5 @@
-use crate::{library, sources};
-use rusqlite::params;
+use crate::sources;
+use rusqlite::{Connection, OpenFlags, params};
 use std::path::{Path, PathBuf};
 
 fn local_file(base: &Path, file: &Path) -> Option<PathBuf> {
@@ -8,7 +8,13 @@ fn local_file(base: &Path, file: &Path) -> Option<PathBuf> {
     (file.starts_with(base) && file.is_file()).then_some(file)
 }
 pub fn track(path: &Path, id: &str) -> Result<Option<PathBuf>, String> {
-    let c = library::db(path)?;
+    let c = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| e.to_string())?;
+    c.busy_timeout(std::time::Duration::from_secs(2))
+        .map_err(|e| e.to_string())?;
     let hash: String = c
         .query_row(
             "SELECT json_extract(data,'$.mapHash') FROM scores WHERE id=?1",
@@ -16,8 +22,25 @@ pub fn track(path: &Path, id: &str) -> Result<Option<PathBuf>, String> {
             |r| r.get(0),
         )
         .map_err(|_| "This score is no longer in the library".to_string())?;
+    for map in crate::maps::cached(&c, &hash.to_ascii_lowercase())? {
+        if let Some(audio) = map.audio
+            && let Some(file) = crate::maps::safe_file(Path::new(&map.root), Path::new(&audio))
+        {
+            return Ok(Some(file));
+        }
+    }
+    let indexed: bool = c
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM beatmap_files WHERE present=1 LIMIT 1)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
     for source in sources::list(&c)? {
         if source.kind == "stable" {
+            if indexed {
+                continue;
+            }
             let root = PathBuf::from(&source.root);
             let songs = source
                 .songs
@@ -59,6 +82,7 @@ pub fn track(path: &Path, id: &str) -> Result<Option<PathBuf>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library;
     #[test]
     fn resolves_audio_from_the_second_install_and_rejects_escaped_paths() {
         let root = std::env::temp_dir().join(format!("sx-audio-{}", std::process::id()));

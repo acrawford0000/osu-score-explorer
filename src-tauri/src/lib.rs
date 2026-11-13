@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod lazer;
 pub mod library;
+pub mod maps;
 pub mod replays;
 pub mod sources;
 
@@ -34,17 +35,9 @@ mod desktop {
         state: State<'_, Store>,
     ) -> Result<Option<String>, String> {
         let path = state.path.clone();
-        let lock = state.replay_lock.clone();
-        let file = tauri::async_runtime::spawn_blocking(move || {
-            if let Some(file) = crate::audio::track(&path, &id)? {
-                return Ok::<_, String>(Some(file));
-            }
-            let _guard = lock.lock().map_err(|e| e.to_string())?;
-            let _ = crate::replays::refresh_lazer(&path);
-            crate::audio::track(&path, &id)
-        })
-        .await
-        .map_err(|e| e.to_string())??;
+        let file = tauri::async_runtime::spawn_blocking(move || crate::audio::track(&path, &id))
+            .await
+            .map_err(|e| e.to_string())??;
         if let Some(file) = file {
             app.asset_protocol_scope()
                 .allow_file(&file)

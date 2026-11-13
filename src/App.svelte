@@ -52,6 +52,7 @@
   } from './lib/backend';
   import { themes } from './lib/themes';
   import type { QueryResult } from './lib/query';
+  import { withTimeout } from './lib/async';
 
   function showDialog(node: HTMLDialogElement) {
     const previous = document.activeElement as HTMLElement | null;
@@ -99,6 +100,8 @@
   let track = $state.raw<Track | null>(null);
   let loadingSong = $state(false),
     songMessage = $state('');
+  let songRequest = 0;
+  $effect(() => { void selected?.id; songRequest++; loadingSong = false; songMessage = ''; });
   let selected = $state<Score | null>(null),
     page = $state(0);
   let metric = $state<'stars' | 'pp' | 'accuracy'>(read('sx-metric', 'stars')),
@@ -269,21 +272,23 @@
       filters.player = library.defaultPlayer;
   }
   async function playSong(score: Score) {
+    const request = ++songRequest;
     loadingSong = true;
     songMessage = '';
     try {
-      const url = await audioTrack(score.id);
+      const url = await withTimeout(audioTrack(score.id), 8000, 'Audio lookup took too long. Try another score or rescan your libraries.');
+      if (request !== songRequest) return;
       if (!url) {
-        songMessage = 'No installed audio was found for this map.';
+        songMessage = 'No installed audio found for this map. Rescan after adding its beatmap.';
         return;
       }
       track = { id: score.id, url, title: score.title, artist: score.artist };
       songMessage = '';
       selected = null;
     } catch (e) {
-      songMessage = String(e);
+      if (request === songRequest) songMessage = String(e);
     } finally {
-      loadingSong = false;
+      if (request === songRequest) loadingSong = false;
     }
   }
   async function chooseReplayFolder(): Promise<string | null> {

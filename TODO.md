@@ -27,6 +27,8 @@
 - [x] Retain independent scan fingerprints and file references; keep shared scores together across installations.
 - [x] Add First, Last, −10 and +10 page navigation with boundary checks.
 - [x] Play installed map audio from the beginning from score details.
+- [x] Show a clear message for missing music, limit lookup wait time, and ignore outdated playback requests.
+- [x] Match imported scores against exact beatmap revisions across connected libraries, with a cached file index.
 - [x] Provide compact sidebar playback, expanded seek/volume controls, and a draggable in-app player.
 
 ## Calculation speed and responsiveness

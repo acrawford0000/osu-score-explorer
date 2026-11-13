@@ -61,7 +61,7 @@ fn refresh_one(path: &Path, root: &Path) -> Result<(), String> {
     let install = crate::sources::key("lazer", root);
     let stamp_key = format!("replay_stamp:{install}");
     let source = root.join("client.realm");
-    let fingerprint = format!("media-2:{}:{}", root.display(), library::stamp(&source)?);
+    let fingerprint = format!("media-3:{}:{}", root.display(), library::stamp(&source)?);
     if metadata(&c, &stamp_key).as_deref() == Some(&fingerprint) {
         return Ok(());
     }
@@ -104,6 +104,14 @@ fn refresh_one(path: &Path, root: &Path) -> Result<(), String> {
         rows: Vec<Row>,
         #[serde(default)]
         audio: Vec<Audio>,
+        #[serde(default)]
+        maps: Vec<Map>,
+    }
+    #[derive(Deserialize)]
+    struct Map {
+        path: String,
+        audio: Option<String>,
+        background: Option<String>,
     }
     #[derive(Deserialize)]
     struct Audio {
@@ -133,6 +141,33 @@ fn refresh_one(path: &Path, root: &Path) -> Result<(), String> {
         tx.execute(
             "INSERT OR REPLACE INTO audio_files VALUES(?1,?2,?3)",
             params![audio.hash, install, audio.path],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS map_locations(source_key TEXT NOT NULL,path TEXT NOT NULL,data TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(source_key,path));").map_err(|e|e.to_string())?;
+    let has_data = {
+        let mut q = tx
+            .prepare("PRAGMA table_info(map_locations)")
+            .map_err(|e| e.to_string())?;
+        q.query_map([], |r| r.get::<_, String>(1))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .any(|v| v == "data")
+    };
+    if !has_data {
+        tx.execute_batch("ALTER TABLE map_locations ADD COLUMN data TEXT NOT NULL DEFAULT '{}'")
+            .map_err(|e| e.to_string())?;
+    }
+    tx.execute("DELETE FROM map_locations WHERE source_key=?1", [&install])
+        .map_err(|e| e.to_string())?;
+    for map in export.maps {
+        tx.execute(
+            "INSERT OR REPLACE INTO map_locations(source_key,path,data) VALUES(?1,?2,?3)",
+            params![
+                install,
+                map.path,
+                serde_json::json!({"audio":map.audio,"background":map.background}).to_string()
+            ],
         )
         .map_err(|e| e.to_string())?;
     }

@@ -15,6 +15,7 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 - Filter by player, gamemode, stable/lazer, mods, date, star rating, and misses.
 - Keep both clients selected or explore either history on its own.
 - Connect multiple stable and lazer installations, including separate Songs folders.
+- Explore an imported score history using beatmaps from your other connected libraries.
 - Jump straight to the first or last page, or move ten pages at a time.
 - Sort by PP, stars, accuracy, most recent, or potential FC PP gain.
 - See achieved combo alongside the map's maximum combo.
