@@ -90,6 +90,7 @@ small {
   min-height: 100vh;
 }
 .sidebar {
+  overflow-y: auto;
   width: 238px;
   flex-shrink: 0;
   background: var(--sidebar);
@@ -561,6 +562,28 @@ h1 {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+.install-entry {
+  padding: 14px;
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.install-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.install-heading label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+.pagination,
+.pagination > div {
+  flex-wrap: wrap;
 }
 .card-art {
   height: 156px;

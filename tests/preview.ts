@@ -7,6 +7,30 @@ const scores = Array.from({ length: 320 }, (_, batch) =>
 localStorage.setItem('sx-filters', JSON.stringify({ ...defaultFilters, player: 'Sample player' }));
 if (new URLSearchParams(location.search).has('fresh')) localStorage.removeItem('sx-replay-folder');
 const events: string[] = [];
+let sources = [
+  { kind: 'stable', root: 'C:\\Games\\osu!', songs: null },
+  { kind: 'lazer', root: 'C:\\Games\\osu-lazer', songs: null },
+];
+const wav = new Uint8Array(44 + 160000);
+wav.fill(128, 44);
+const header = new DataView(wav.buffer);
+for (const [offset, text] of [
+  [0, 'RIFF'],
+  [8, 'WAVEfmt '],
+  [36, 'data'],
+] as const)
+  for (let i = 0; i < text.length; i++) wav[offset + i] = text.charCodeAt(i);
+header.setUint32(4, wav.length - 8, true);
+header.setUint32(16, 16, true);
+header.setUint16(20, 1, true);
+header.setUint16(22, 1, true);
+header.setUint32(24, 8000, true);
+header.setUint32(28, 8000, true);
+header.setUint16(32, 1, true);
+header.setUint16(34, 8, true);
+header.setUint32(40, 160000, true);
+const silentAudio =
+  'data:audio/wav;base64,' + btoa(Array.from(wav, (b) => String.fromCharCode(b)).join(''));
 const status = document.getElementById('test-status')!;
 let inputEvents = 0;
 let maxInputDelay = 0;
@@ -31,6 +55,7 @@ document.addEventListener(
 );
 Object.assign(window, {
   __TAURI_INTERNALS__: {
+    convertFileSrc: (path: string) => path,
     invoke: async (command: string, args: Record<string, unknown>) => {
       if (command === 'load_library')
         return {
@@ -42,7 +67,15 @@ Object.assign(window, {
           lazerScores: 0,
           mergedDuplicates: 0,
           nativeLazerScores: 0,
+          gameSources: sources,
         };
+      if (command === 'save_sources') {
+        sources = args.sources as typeof sources;
+        events.push(`saved ${sources.length} folders`);
+        report();
+        return sources;
+      }
+      if (command === 'audio_track') return silentAudio;
       if (command === 'replay_availability')
         return {
           available: (args.ids as string[]).map((id) => ({ id, filename: 'sample.osr' })),

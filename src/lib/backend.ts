@@ -1,5 +1,11 @@
-import { invoke } from '@tauri-apps/api/core';
-import type { Library } from './model';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+export const audioTrack = async (id: string) => {
+  const path = await invoke<string | null>('audio_track', { id });
+  return path ? convertFileSrc(path) : null;
+};
+import type { Library, GameSource } from './model';
+export const saveSources = (sources: GameSource[]) =>
+  invoke<GameSource[]>('save_sources', { sources });
 export const isDesktop = '__TAURI_INTERNALS__' in window;
 export const loadLibrary = () => invoke<Library>('load_library');
 export const importStable = (root: string, songs: string | null, force = false) =>

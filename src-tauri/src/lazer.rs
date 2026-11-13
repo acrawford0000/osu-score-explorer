@@ -12,6 +12,25 @@ use std::{
 
 pub const ENGINE: &str = "rosu-pp 4.0.1 / lazer / policy-1";
 const ADAPTER: &str = "realm-adapter-3";
+fn same_inputs(saved: &str, current: &str) -> bool {
+    let (Ok(mut old), Ok(mut new)) = (
+        serde_json::from_str::<Value>(saved),
+        serde_json::from_str::<Value>(current),
+    ) else {
+        return false;
+    };
+    // Adapter metadata does not change PP when all decoded calculation inputs match.
+    if let (Some(a), Some(b)) = (old.as_array_mut(), new.as_array_mut())
+        && !a.is_empty()
+        && !b.is_empty()
+    {
+        a[0] = Value::Null;
+        b[0] = Value::Null;
+    } else {
+        return false;
+    }
+    old == new
+}
 #[derive(Deserialize)]
 struct Export {
     schema: u64,
@@ -210,22 +229,11 @@ pub fn import(path: &Path, root: &Path, force: bool) -> Result<Library, String> 
     let source = root.join("client.realm");
     let fingerprint = format!("{ENGINE}|{ADAPTER}|{}", library::stamp(&source)?);
     let mut c = library::db(path)?;
-    let previous_root: Option<String> = c
-        .query_row(
-            "SELECT data FROM metadata WHERE key='lazer_root'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-    let force = force
-        || previous_root
-            .as_deref()
-            .is_some_and(|p| p != root.to_string_lossy());
+    let install = crate::sources::scope(&c, "lazer", root)?;
     let previous: Option<String> = c
         .query_row(
-            "SELECT data FROM metadata WHERE key='lazer_stamp'",
-            [],
+            "SELECT data FROM metadata WHERE key=?1",
+            [format!("lazer_stamp:{install}")],
             |r| r.get(0),
         )
         .optional()
@@ -309,10 +317,25 @@ pub fn import(path: &Path, root: &Path, force: bool) -> Result<Library, String> 
             )
             .optional()
             .map_err(|e| e.to_string())?;
-        if !force && known.contains_key(&id) && saved.as_deref() == Some(&input) {
+        if !force
+            && known.contains_key(&id)
+            && saved.as_deref().is_some_and(|old| same_inputs(old, &input))
+        {
+            tx.execute(
+                "INSERT OR REPLACE INTO metadata VALUES(?1,?2)",
+                params![input_key, input],
+            )
+            .map_err(|e| e.to_string())?;
             let mut old: Score = serde_json::from_str(&known[&id]).map_err(|e| e.to_string())?;
             let image =
                 safe_store_file(root, &row.artwork).map(|p| p.to_string_lossy().to_string());
+            if let Some(image) = &image {
+                tx.execute(
+                    "INSERT OR REPLACE INTO score_artwork VALUES(?1,?2,?3)",
+                    params![id, install, image],
+                )
+                .map_err(|e| e.to_string())?;
+            }
             if old.player != row.player
                 || old.player_id != row.player_id
                 || old.title != row.title
@@ -410,6 +433,13 @@ pub fn import(path: &Path, root: &Path, force: bool) -> Result<Library, String> 
             solo_online_id: row.online_id.clone(),
         };
         let image = safe_store_file(root, &row.artwork).map(|p| p.to_string_lossy().to_string());
+        if let Some(image) = &image {
+            tx.execute(
+                "INSERT OR REPLACE INTO score_artwork VALUES(?1,?2,?3)",
+                params![id, install, image],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         score.has_artwork = image.is_some();
         let mod_result = parsed_mods(row);
         if !maps.contains_key(&row.map_sha) {
@@ -478,6 +508,12 @@ pub fn import(path: &Path, root: &Path, force: bool) -> Result<Library, String> 
         )
         .map_err(|e| e.to_string())?;
     }
+    crate::sources::remember(&tx, "lazer", root, None)?;
+    tx.execute(
+        "INSERT OR REPLACE INTO metadata VALUES(?1,?2)",
+        params![format!("lazer_stamp:{install}"), fingerprint],
+    )
+    .map_err(|e| e.to_string())?;
     for (key, value) in [
         ("lazer_stamp", fingerprint),
         ("lazer_root", root.to_string_lossy().to_string()),
@@ -613,6 +649,66 @@ pub fn rebuild_links(path: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         }
     }
+    // Importing a replay into another lazer install may assign a new GUID.
+    // Merge only exact results for the same known player and gameplay rules.
+    let existing: HashMap<String, String> = {
+        let mut q = tx
+            .prepare("SELECT alias_id,canonical_id FROM score_links")
+            .map_err(|e| e.to_string())?;
+        q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?
+    };
+    let mut lazer: Vec<_> = scores.iter().filter(|s| s.source == "lazer").collect();
+    lazer.sort_by_key(|s| (!existing.contains_key(&s.id), &s.id));
+    let mut plays = HashMap::<String, String>::new();
+    for s in lazer {
+        if date_ms(s).is_none() || s.map_hash.is_empty() {
+            continue;
+        }
+        let owner = if let Some(id) = s.player_id.filter(|id| *id > 1) {
+            format!("id:{id}")
+        } else {
+            if matches!(
+                s.player.to_lowercase().as_str(),
+                "guest" | "unknown player" | ""
+            ) {
+                continue;
+            }
+            format!("name:{}", s.player.to_lowercase())
+        };
+        let identity = serde_json::to_string(&serde_json::json!([
+            owner,
+            s.mode,
+            s.map_hash,
+            date_ms(s),
+            s.gameplay_lazer,
+            s.raw_score,
+            s.combo,
+            s.n300,
+            s.n100,
+            s.n50,
+            s.n_geki,
+            s.n_katu,
+            s.misses,
+            s.mods,
+            s.mods_json
+        ]))
+        .unwrap();
+        let canonical = existing.get(&s.id).unwrap_or(&s.id);
+        if let Some(first) = plays.get(&identity) {
+            if s.id != *first {
+                tx.execute(
+                    "INSERT OR REPLACE INTO score_links VALUES(?1,?2)",
+                    params![s.id, first],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        } else {
+            plays.insert(identity, canonical.clone());
+        }
+    }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -620,6 +716,21 @@ pub fn rebuild_links(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn caches_survive_adapter_metadata_changes_but_not_calculation_input_changes() {
+        assert!(same_inputs(
+            "[\"adapter-2\",\"engine-1\",{\"Ok\":3}]",
+            "[\"adapter-3\",\"engine-1\",{\"Ok\":3}]"
+        ));
+        assert!(!same_inputs(
+            "[\"adapter-2\",\"engine-1\",{\"Ok\":3}]",
+            "[\"adapter-3\",\"engine-1\",{\"Ok\":4}]"
+        ));
+        assert!(!same_inputs(
+            "[\"adapter-2\",\"engine-1\"]",
+            "[\"adapter-3\",\"engine-2\"]"
+        ));
+    }
     fn score(id: &str, source: &str) -> Score {
         serde_json::from_value(serde_json::json!({"id":id,"mapHash":"same-map-md5","player":"fixture","date":"2020-01-01T12:00:00.123456Z","mode":0,"title":"Fixture","artist":"Test","difficulty":"Test","mapper":"Test","mods":0,"n300":99,"n100":1,"n50":0,"misses":0,"combo":100,"maxCombo":100,"rawScore":12345,"accuracy":99.0,"fc":true,"ss":false,"stars":null,"pp":null,"fcPp":null,"source":source,"status":"Fixture","hasArtwork":false,"legacyOnlineId":"12345"})).unwrap()
     }
@@ -694,6 +805,45 @@ mod tests {
         assert_eq!(personal.sources, vec!["lazer", "stable"]);
         let native = l.scores.iter().find(|s| s.id == "lazer:native").unwrap();
         assert_eq!(native.player_aliases, vec!["New name", "Old name"]);
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+    }
+    #[test]
+    fn recognizes_reimported_lazer_copies_without_merging_distinct_players_or_rules() {
+        let path =
+            std::env::temp_dir().join(format!("sx-lazer-copies-{}.sqlite", std::process::id()));
+        let _ = fs::remove_file(&path);
+        {
+            let c = library::db(&path).unwrap();
+            let mut a = score("lazer:a", "lazer");
+            a.gameplay_lazer = true;
+            a.player_id = Some(42);
+            let mut copy = a.clone();
+            copy.id = "lazer:b".into();
+            let mut other = a.clone();
+            other.id = "lazer:c".into();
+            other.player_id = Some(43);
+            other.player = "Other".into();
+            let mut legacy = a.clone();
+            legacy.id = "lazer:d".into();
+            legacy.gameplay_lazer = false;
+            let mut setting = a.clone();
+            setting.id = "lazer:e".into();
+            setting.mods_json = "[{\"acronym\":\"DA\",\"settings\":{\"circle_size\":4}}]".into();
+            for s in [a, copy, other, legacy, setting] {
+                c.execute(
+                    "INSERT INTO scores VALUES(?1,?2,NULL)",
+                    params![s.id, serde_json::to_string(&s).unwrap()],
+                )
+                .unwrap();
+            }
+        }
+        rebuild_links(&path).unwrap();
+        rebuild_links(&path).unwrap();
+        let l = library::load(&path).unwrap();
+        assert_eq!(l.scores.len(), 4);
+        assert_eq!(l.merged_duplicates, 1);
         for suffix in ["", "-wal", "-shm"] {
             let _ = fs::remove_file(format!("{}{suffix}", path.display()));
         }

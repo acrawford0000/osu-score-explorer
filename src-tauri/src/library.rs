@@ -84,6 +84,7 @@ pub struct Library {
     pub merged_duplicates: usize,
     pub native_lazer_scores: usize,
     pub lazer_root: Option<String>,
+    pub game_sources: Vec<crate::sources::GameSource>,
 }
 pub(crate) fn db(path: &Path) -> Result<Connection, String> {
     let c = Connection::open(path).map_err(|e| e.to_string())?;
@@ -91,10 +92,23 @@ pub(crate) fn db(path: &Path) -> Result<Connection, String> {
         .map_err(|e| e.to_string())?;
     c.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS scores(id TEXT PRIMARY KEY, data TEXT NOT NULL, artwork TEXT); CREATE TABLE IF NOT EXISTS calculations(key TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, data TEXT NOT NULL);").map_err(|e|e.to_string())?;
     c.execute_batch("CREATE TABLE IF NOT EXISTS score_links(alias_id TEXT PRIMARY KEY,canonical_id TEXT NOT NULL); CREATE INDEX IF NOT EXISTS links_canonical ON score_links(canonical_id);").map_err(|e|e.to_string())?;
+    c.execute_batch("CREATE TABLE IF NOT EXISTS score_artwork(id TEXT NOT NULL,source_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,source_key));").map_err(|e|e.to_string())?;
+    if crate::sources::value(&c, "multi_artwork").is_none() {
+        c.execute_batch("BEGIN; INSERT OR IGNORE INTO score_artwork SELECT id,'legacy:'||artwork,artwork FROM scores WHERE artwork IS NOT NULL; INSERT OR REPLACE INTO metadata VALUES('multi_artwork','1'); COMMIT;").map_err(|e|e.to_string())?;
+    }
     Ok(c)
 }
 pub fn load(path: &Path) -> Result<Library, String> {
     let c = db(path)?;
+    let artwork_ids: HashSet<String> = {
+        let mut q = c
+            .prepare("SELECT DISTINCT id FROM score_artwork")
+            .map_err(|e| e.to_string())?;
+        q.query_map([], |r| r.get(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?
+    };
     let mut q = c
         .prepare("SELECT data FROM scores ORDER BY id")
         .map_err(|e| e.to_string())?;
@@ -108,6 +122,7 @@ pub fn load(path: &Path) -> Result<Library, String> {
         // Lazer legacy/guest records can share the placeholder ID 1 across
         // unrelated names. Normalize old caches too, without recalculating PP.
         score.player_id = score.player_id.filter(|id| *id > 1);
+        score.has_artwork |= artwork_ids.contains(&score.id);
         if score.calculation_version != ENGINE
             && score.calculation_version != crate::lazer::ENGINE
             && score.pp.is_some()
@@ -191,6 +206,7 @@ pub fn load(path: &Path) -> Result<Library, String> {
             .flatten()
     };
     Ok(Library {
+        game_sources: crate::sources::list(&c)?,
         scores,
         warnings: get("warnings")
             .and_then(|x| serde_json::from_str(&x).ok())
@@ -378,6 +394,7 @@ pub fn import_scan(
         song_root.display()
     );
     let mut c = db(path)?;
+    let install = crate::sources::scope(&c, "stable", root)?;
     let configuration = format!(
         "{}|{}",
         root.canonicalize().map_err(|e| e.to_string())?.display(),
@@ -385,8 +402,8 @@ pub fn import_scan(
     );
     let previous_configuration: Option<String> = c
         .query_row(
-            "SELECT data FROM metadata WHERE key='stable_configuration'",
-            [],
+            "SELECT data FROM metadata WHERE key=?1",
+            [format!("stable_configuration:{install}")],
             |r| r.get(0),
         )
         .optional()
@@ -394,11 +411,11 @@ pub fn import_scan(
     let force = force
         || previous_configuration
             .as_ref()
-            .is_some_and(|previous| previous != &configuration);
+            .is_none_or(|previous| previous != &configuration);
     let last: Option<String> = c
         .query_row(
-            "SELECT data FROM metadata WHERE key='stable_stamp'",
-            [],
+            "SELECT data FROM metadata WHERE key=?1",
+            [format!("stable_stamp:{install}")],
             |r| r.get(0),
         )
         .optional()
@@ -684,6 +701,13 @@ pub fn import_scan(
         }
     }
     for (id, (score, image)) in &records {
+        if let Some(image) = image {
+            tx.execute(
+                "INSERT OR REPLACE INTO score_artwork VALUES(?1,?2,?3)",
+                params![id, install, image],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         tx.execute(
             "INSERT OR REPLACE INTO scores VALUES(?1,?2,?3)",
             params![
@@ -695,6 +719,14 @@ pub fn import_scan(
         .map_err(|e| e.to_string())?;
     }
     let now = chrono::Utc::now().to_rfc3339();
+    crate::sources::remember(&tx, "stable", root, songs)?;
+    for (field, data) in [("stamp", &source_key), ("configuration", &configuration)] {
+        tx.execute(
+            "INSERT OR REPLACE INTO metadata VALUES(?1,?2)",
+            params![format!("stable_{field}:{install}"), data],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     for (key, value) in [
         ("engine", ENGINE.to_string()),
         ("imported_at", now),
@@ -721,7 +753,7 @@ pub fn import_scan(
 }
 pub fn artwork(path: &Path, id: &str) -> Result<Option<String>, String> {
     let c = db(path)?;
-    let mut q=c.prepare("SELECT artwork FROM scores WHERE (id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1)) AND artwork IS NOT NULL ORDER BY CASE WHEN id=?1 THEN 0 ELSE 1 END").map_err(|e|e.to_string())?;
+    let mut q=c.prepare("SELECT artwork FROM scores WHERE (id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1)) AND artwork IS NOT NULL UNION SELECT path FROM score_artwork WHERE id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1)").map_err(|e|e.to_string())?;
     let files = q
         .query_map([id], |r| r.get::<_, String>(0))
         .map_err(|e| e.to_string())?;
@@ -830,6 +862,29 @@ mod tests {
         let retained = import(&cache, &folder, None).unwrap();
         assert_eq!(retained.scores.len(), 2);
         assert_eq!(retained.new_scores, 0);
+        let other = folder.join("second-install");
+        fs::create_dir(&other).unwrap();
+        list.save(other.join("scores.db")).unwrap();
+        let cloned = import(&cache, &other, None).unwrap();
+        assert_eq!(
+            cloned.scores.len(),
+            2,
+            "shared scores must not multiply across installs"
+        );
+        assert_eq!(cloned.new_scores, 0);
+        let mut third = list.beatmaps[0].scores[0].clone();
+        third.timestamp += chrono::Duration::seconds(20);
+        third.replay_hash = Some("third-replay".into());
+        list.beatmaps[0].scores.push(third);
+        list.save(other.join("scores.db")).unwrap();
+        assert_eq!(import(&cache, &other, None).unwrap().scores.len(), 3);
+        assert!(
+            import(&cache, &folder, None).unwrap().source_unchanged,
+            "switching installs must retain independent stamps"
+        );
+        assert!(import(&cache, &other, None).unwrap().source_unchanged);
+        assert_eq!(load(&cache).unwrap().game_sources.len(), 2);
+        fs::remove_dir_all(&other).unwrap();
         for name in [
             "scores.db",
             "app.sqlite",

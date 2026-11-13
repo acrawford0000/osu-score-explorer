@@ -21,6 +21,14 @@
 - [ ] Optional online beatmap information.
 - [ ] Collection editing.
 
+## Connected libraries and music
+
+- [x] Configure multiple stable and lazer folders, with a separate optional Songs path per stable install.
+- [x] Retain independent scan fingerprints and file references; keep shared scores together across installations.
+- [x] Add First, Last, −10 and +10 page navigation with boundary checks.
+- [x] Play installed map audio from the beginning from score details.
+- [x] Provide compact sidebar playback, expanded seek/volume controls, and a draggable in-app player.
+
 ## Calculation speed and responsiveness
 
 - [ ] Add bounded parallel workers for first-run map difficulty, stars, actual PP, and PP-if-FC calculations. Keep CPU capacity available for the interface and other applications.

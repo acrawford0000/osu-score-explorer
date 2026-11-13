@@ -1,6 +1,8 @@
+pub mod audio;
 pub mod lazer;
 pub mod library;
 pub mod replays;
+pub mod sources;
 
 #[cfg(feature = "desktop")]
 mod desktop {
@@ -25,6 +27,45 @@ mod desktop {
         }
     }
 
+    #[tauri::command]
+    async fn audio_track(
+        id: String,
+        app: tauri::AppHandle,
+        state: State<'_, Store>,
+    ) -> Result<Option<String>, String> {
+        let path = state.path.clone();
+        let lock = state.replay_lock.clone();
+        let file = tauri::async_runtime::spawn_blocking(move || {
+            if let Some(file) = crate::audio::track(&path, &id)? {
+                return Ok::<_, String>(Some(file));
+            }
+            let _guard = lock.lock().map_err(|e| e.to_string())?;
+            let _ = crate::replays::refresh_lazer(&path);
+            crate::audio::track(&path, &id)
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        if let Some(file) = file {
+            app.asset_protocol_scope()
+                .allow_file(&file)
+                .map_err(|e| e.to_string())?;
+            Ok(Some(file.to_string_lossy().to_string()))
+        } else {
+            Ok(None)
+        }
+    }
+    #[tauri::command]
+    async fn save_sources(
+        sources: Vec<crate::sources::GameSource>,
+        state: State<'_, Store>,
+    ) -> Result<Vec<crate::sources::GameSource>, String> {
+        let path = state.path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::sources::save(&library::db(&path)?, sources)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
     #[tauri::command]
     async fn replay_availability(
         ids: Vec<String>,
@@ -131,7 +172,9 @@ mod desktop {
                 import_lazer,
                 artwork,
                 replay_availability,
-                export_replay
+                export_replay,
+                save_sources,
+                audio_track
             ])
             .run(tauri::generate_context!())
             .expect("Could not start Score Explorer");

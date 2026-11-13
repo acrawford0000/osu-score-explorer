@@ -6,10 +6,18 @@ import {
   strongIdentity,
   modLabel,
   hitBreakdown,
+  clampPage,
 } from '../src/lib/model';
 import { demoScores } from '../src/lib/demo';
 const base = demoScores()[0];
 describe('score exploration', () => {
+  it('clamps first, last and ten-page jumps to valid page boundaries', () => {
+    expect(clampPage(10, 30720, 36)).toBe(10);
+    expect(clampPage(-9, 30720, 36)).toBe(0);
+    expect(clampPage(900, 30720, 36)).toBe(853);
+    expect(clampPage(5, 0, 36)).toBe(0);
+    expect(clampPage(10, 37, 36)).toBe(1);
+  });
   it('shows the exact SS choke judgments with mode-specific labels', () => {
     const s = { ...base, n300: 400, n100: 3, n50: 2, misses: 1, nGeki: 500, nKatu: 4 };
     expect(hitBreakdown({ ...s, mode: 0 })).toEqual({

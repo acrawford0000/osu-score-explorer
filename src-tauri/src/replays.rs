@@ -33,26 +33,43 @@ fn metadata(c: &Connection, key: &str) -> Option<String> {
 }
 fn table(c: &Connection) -> Result<(), String> {
     c.execute_batch(
-        "CREATE TABLE IF NOT EXISTS replay_files(id TEXT PRIMARY KEY,path TEXT NOT NULL);",
+        "CREATE TABLE IF NOT EXISTS audio_files(hash TEXT NOT NULL,source_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(hash,source_key)); CREATE TABLE IF NOT EXISTS replay_files(id TEXT PRIMARY KEY,path TEXT NOT NULL); CREATE TABLE IF NOT EXISTS replay_locations(id TEXT NOT NULL,source_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,source_key));",
     )
     .map_err(|e| e.to_string())
 }
 // Index references from an immutable snapshot, without revisiting PP calculations.
 pub fn refresh_lazer(path: &Path) -> Result<(), String> {
+    let c = library::db(path)?;
+    let mut errors = Vec::new();
+    for source in crate::sources::list(&c)?
+        .into_iter()
+        .filter(|s| s.kind == "lazer")
+    {
+        if let Err(e) = refresh_one(path, Path::new(&source.root)) {
+            errors.push(format!("{}: {e}", source.root));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+fn refresh_one(path: &Path, root: &Path) -> Result<(), String> {
     let mut c = library::db(path)?;
     table(&c)?;
-    let Some(root) = metadata(&c, "lazer_root").map(PathBuf::from) else {
-        return Ok(());
-    };
+    let install = crate::sources::key("lazer", root);
+    let stamp_key = format!("replay_stamp:{install}");
     let source = root.join("client.realm");
-    let fingerprint = format!("replays-1:{}:{}", root.display(), library::stamp(&source)?);
-    if metadata(&c, "replay_stamp").as_deref() == Some(&fingerprint) {
+    let fingerprint = format!("media-2:{}:{}", root.display(), library::stamp(&source)?);
+    if metadata(&c, &stamp_key).as_deref() == Some(&fingerprint) {
         return Ok(());
     }
     let scratch = path
         .parent()
         .ok_or("Missing cache directory")?
-        .join("replay-index");
+        .join("replay-index")
+        .join(&install);
     fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let snapshot = scratch.join("snapshot.realm");
     let output = scratch.join("replays.json");
@@ -62,7 +79,7 @@ pub fn refresh_lazer(path: &Path) -> Result<(), String> {
     command
         .arg(runtime.join("import-lazer.cjs"))
         .arg(&snapshot)
-        .arg(&root)
+        .arg(root)
         .arg(&output)
         .arg("--replays");
     #[cfg(windows)]
@@ -85,24 +102,43 @@ pub fn refresh_lazer(path: &Path) -> Result<(), String> {
     #[derive(Deserialize)]
     struct Export {
         rows: Vec<Row>,
+        #[serde(default)]
+        audio: Vec<Audio>,
+    }
+    #[derive(Deserialize)]
+    struct Audio {
+        hash: String,
+        path: String,
     }
     let export: Export = serde_json::from_slice(&fs::read(&output).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())?;
     let tx = c.transaction().map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM replay_files", [])
-        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM replay_locations WHERE source_key=?1",
+        [&install],
+    )
+    .map_err(|e| e.to_string())?;
     for row in export.rows {
         if let Some(file) = row.path {
             tx.execute(
-                "INSERT OR REPLACE INTO replay_files VALUES(?1,?2)",
-                params![row.id, file],
+                "INSERT OR REPLACE INTO replay_locations VALUES(?1,?2,?3)",
+                params![row.id, install, file],
             )
             .map_err(|e| e.to_string())?;
         }
     }
+    tx.execute("DELETE FROM audio_files WHERE source_key=?1", [&install])
+        .map_err(|e| e.to_string())?;
+    for audio in export.audio {
+        tx.execute(
+            "INSERT OR REPLACE INTO audio_files VALUES(?1,?2,?3)",
+            params![audio.hash, install, audio.path],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     tx.execute(
-        "INSERT OR REPLACE INTO metadata VALUES('replay_stamp',?1)",
-        [&fingerprint],
+        "INSERT OR REPLACE INTO metadata VALUES(?1,?2)",
+        [&stamp_key, &fingerprint],
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
@@ -135,26 +171,24 @@ fn records(c: &Connection, id: &str) -> Result<Vec<Score>, String> {
 }
 fn candidates(c: &Connection, score: &Score) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    if score.source == "stable" {
-        if let (Some(root), Some(name)) = (metadata(c, "stable_root"), stable_filename(score)) {
-            let base = PathBuf::from(root).join("Data/r");
+    for source in crate::sources::list(c)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|s| s.kind == score.source)
+    {
+        if score.source == "stable" {
+          if let Some(name) = stable_filename(score) {
+            let base = PathBuf::from(&source.root).join("Data/r");
             if let Some(file) = within(&base, &base.join(name)) {
                 files.push(file);
             }
+          }
+        } else if let Ok(mut q)=c.prepare("SELECT path FROM replay_locations WHERE id=?1 AND source_key=?2 UNION SELECT path FROM replay_files WHERE id=?1") {
+            let install=crate::sources::key("lazer",Path::new(&source.root));
+            if let Ok(rows)=q.query_map(params![score.id,install],|r|r.get::<_,String>(0)) {
+                for file in rows.flatten() {if let Some(file)=within(&PathBuf::from(&source.root).join("files"),Path::new(&file)) {files.push(file);}}
+            }
         }
-    } else if let (Some(root), Some(file)) = (
-        metadata(c, "lazer_root"),
-        c.query_row(
-            "SELECT path FROM replay_files WHERE id=?1",
-            [&score.id],
-            |r| r.get::<_, String>(0),
-        )
-        .optional()
-        .ok()
-        .flatten(),
-    ) && let Some(file) = within(&PathBuf::from(root).join("files"), Path::new(&file))
-    {
-        files.push(file);
     }
     files
 }
@@ -232,9 +266,14 @@ pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String
     }
     let c = library::db(path)?;
     table(&c)?;
-    for (key, subdir) in [("stable_root", "Data"), ("lazer_root", "files")] {
-        if let Some(base) =
-            metadata(&c, key).and_then(|r| PathBuf::from(r).join(subdir).canonicalize().ok())
+    for source in crate::sources::list(&c)? {
+        if let Ok(base) = PathBuf::from(&source.root)
+            .join(if source.kind == "stable" {
+                "Data"
+            } else {
+                "files"
+            })
+            .canonicalize()
             && directory.starts_with(base)
         {
             return Err("Choose a folder outside the game's internal data storage".into());
@@ -383,11 +422,51 @@ mod tests {
         assert_ne!(first, second);
         assert_eq!(fs::read(&first).unwrap(), stable_bytes);
         assert!(export(&path, &a.id, &stable.join("Data/r")).is_err());
+        let other_stable = root.join("other-stable");
+        fs::create_dir_all(other_stable.join("Data/r")).unwrap();
+        let other_file = other_stable
+            .join("Data/r")
+            .join(stable_filename(&a).unwrap());
+        fs::write(&other_file, &stable_bytes).unwrap();
+        {
+            let c = library::db(&path).unwrap();
+            crate::sources::remember(&c, "stable", &other_stable, None).unwrap();
+        }
         // Merged cards can still export from lazer after the stable copy disappears.
         fs::remove_file(&stable_file).unwrap();
+        assert_eq!(
+            fs::read(export(&path, &a.id, &output).unwrap()).unwrap(),
+            stable_bytes,
+            "another stable install remains usable"
+        );
+        fs::remove_file(other_file).unwrap();
         let fallback = export(&path, &a.id, &output).unwrap();
         assert_eq!(fs::read(fallback).unwrap(), lazer_bytes);
         assert_eq!(fs::read(&lazer_file).unwrap(), lazer_bytes);
+        let other_lazer = root.join("other-lazer");
+        fs::create_dir_all(other_lazer.join("files")).unwrap();
+        let other_replay = other_lazer.join("files/copy");
+        fs::write(&other_replay, &lazer_bytes).unwrap();
+        {
+            let c = library::db(&path).unwrap();
+            crate::sources::remember(&c, "lazer", &other_lazer, None).unwrap();
+            c.execute(
+                "INSERT INTO replay_locations VALUES(?1,?2,?3)",
+                params![
+                    b.id,
+                    crate::sources::key("lazer", &other_lazer),
+                    other_replay.to_string_lossy()
+                ],
+            )
+            .unwrap();
+        }
+        fs::remove_file(&lazer_file).unwrap();
+        assert_eq!(
+            fs::read(export(&path, &a.id, &output).unwrap()).unwrap(),
+            lazer_bytes,
+            "another lazer install remains usable"
+        );
+        fs::remove_file(other_replay).unwrap();
         // Wrong-score files and references outside the source storage are rejected.
         let mut wrong = b.clone();
         wrong.map_hash = "ffffffffffffffffffffffffffffffff".into();

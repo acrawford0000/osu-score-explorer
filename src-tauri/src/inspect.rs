@@ -66,6 +66,27 @@ fn main() {
         );
         return;
     }
+    if args[1] == "--audio-audit" {
+        let path = PathBuf::from(&args[2]);
+        score_explorer::replays::refresh_lazer(&path).expect("Index local media");
+        let l = score_explorer::library::load(&path).unwrap();
+        println!("Configured game folders: {}", l.game_sources.len());
+        for source in ["stable", "lazer"] {
+            let mut found = false;
+            for s in l.scores.iter().filter(|s| s.source == source).take(100) {
+                if let Some(file) = score_explorer::audio::track(&path, &s.id).unwrap() {
+                    println!(
+                        "{source}: resolved installed audio ({} bytes)",
+                        std::fs::metadata(file).unwrap().len()
+                    );
+                    found = true;
+                    break;
+                }
+            }
+            assert!(found, "Need installed audio from {source}");
+        }
+        return;
+    }
     if args[1] == "--lazer" {
         if args.len() < 4 {
             eprintln!("Usage: inspect-library --lazer <cache.sqlite> <lazer-folder>");

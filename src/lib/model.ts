@@ -34,6 +34,7 @@ export type Score = {
   gameplayLazer?: boolean;
 };
 export type Library = {
+  gameSources?: GameSource[];
   scores: Score[];
   warnings: string[];
   engine: string;
@@ -51,6 +52,10 @@ export type Library = {
   nativeLazerScores: number;
   lazerRoot?: string | null;
 };
+export type GameSource = { kind: 'stable' | 'lazer'; root: string; songs: string | null };
+export function clampPage(page: number, total: number, size: number): number {
+  return Math.max(0, Math.min(Math.max(0, Math.ceil(total / size) - 1), Math.trunc(page)));
+}
 export type Filters = {
   search: string;
   preset: string;

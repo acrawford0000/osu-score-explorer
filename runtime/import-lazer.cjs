@@ -38,7 +38,13 @@ try {
       combo: s.MaxCombo, rawScore: s.TotalScore, legacyScore: s.LegacyTotalScore, accuracy: s.Accuracy * 100,
     });
   }
-  fs.writeFileSync(output, JSON.stringify({ schema: version, rows }));
+  const audio = replayOnly ? [...realm.objects('Beatmap')].flatMap(m => {
+    const name = m.Metadata?.AudioFile?.replaceAll('\\','/').toLowerCase();
+    const file = [...(m.BeatmapSet?.Files || [])].find(f => f.Filename?.replaceAll('\\','/').toLowerCase() === name);
+    const stored = filePath(file?.File?.Hash);
+    return stored ? [{ hash: m.MD5Hash || m.Hash, path: stored }] : [];
+  }) : [];
+  fs.writeFileSync(output, JSON.stringify({ schema: version, rows, audio }));
   realm.close();
   process.exit(0);
 } catch (e) {

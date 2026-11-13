@@ -12,6 +12,8 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 - Search by song, artist, difficulty, or mapper.
 - Filter by player, gamemode, stable/lazer, mods, date, star rating, and misses.
 - Keep both clients selected or explore either history on its own.
+- Connect multiple stable and lazer installations, including separate Songs folders.
+- Jump straight to the first or last page, or move ten pages at a time.
 - Sort by PP, stars, accuracy, most recent, or potential FC PP gain.
 - See achieved combo alongside the map's maximum combo.
 - See hit counts on every card to understand exactly how a near-SS play fell short.
@@ -20,6 +22,10 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 ## Save your replays
 
 Export available local **stable and lazer replays** as `.osr` files from score cards or score details. Choose a default export folder in Settings, or let the app ask on your first export and remember your choice. Exporting another copy keeps existing files safe.
+
+## Hear an old favorite again
+
+Open a score and choose **Play song** to listen to its installed beatmap audio from the beginning. Keep browsing with compact sidebar controls, expand them for seeking and volume, or drag a floating player wherever you want within the app.
 
 ## Find your next goal
 

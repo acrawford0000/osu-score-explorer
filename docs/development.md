@@ -34,6 +34,8 @@ npm run tauri -- build --debug --no-bundle
 
 Unchanged sources are skipped using source fingerprints. Changed stable databases are parsed once and compared against a hash set of known records before map resolution or calculation. Lazer uses source GUIDs and score-input fingerprints to avoid recalculating unchanged plays.
 
+The configured folder list is persisted in the app database. Fingerprints are scoped to normalized client/folder identities; the original single-install settings are migrated automatically. Stable custom Songs paths remain attached to their own install. Artwork and replay references retain alternate copies across installs. Removing a folder stops future scans of that path and preserves imported history. Exact reimported lazer results can be linked across differing GUIDs only when player identity, timestamp, ruleset, gameplay semantics, judgments, score, combo, and mod settings match.
+
 Cross-client links use namespaced legacy IDs and complete result checks, with conservative fingerprint matching when IDs are absent. Native lazer plays are never merged with stable merely because results resemble each other. Raw records are retained independently of canonical links. Verified duplicate pairs can establish player-name aliases for a shared online user ID. Placeholder/guest IDs (including 1) are excluded, including when reading older caches.
 
 Lazer statistics can use older PascalCase or newer snake_case judgment names. Normalization and ruleset-specific mapping are tested independently. Full mod settings are retained for calculations.
@@ -53,6 +55,12 @@ Filtering, sorting, whole-result summaries, and progression run in a Web Worker.
 Local replay detection/export runs in Tauri blocking tasks. Stable replay filenames use map MD5 and Windows file time. Lazer replay paths come from `Score.Files` in a read-only snapshot, cached by source fingerprint. Exports validate the replay header and copy the original bytes, preserving newer metadata. Merged scores can use either retained source copy. The destination is a user-selected folder and new files are created exclusively, with numbered names on collisions.
 
 For a 30,720-score browser UI fixture, open `/tests/preview.html` on the dev server. Add `?fresh` to clear the fixture's default export folder. It uses synthetic scores and simulated native dialogs/exports, records input delay and long tasks, and never reads game files. Rust tests and the private `inspect-library --replay-audit` diagnostic exercise real file export separately.
+
+## Local music playback
+
+Score details resolve audio across configured libraries in blocking tasks. Stable uses map metadata and each install's Songs root; lazer audio references share the source-fingerprinted read-only media index. Paths must resolve inside the appropriate Songs/file-store root. Only the resolved file is granted access through Tauri's asset protocol, which supports ranged streaming for seeking. The interface retains one audio element across views, starts at time zero, and stores volume locally. Floating controls stay within the application; there is no separate OS window or online audio fetch.
+
+The browser fixture provides a generated silent WAV for playback, seek, float/dock, and drag checks. `inspect-library --audio-audit <app-cache.sqlite>` checks installed audio resolution without playing music.
 
 ## Current limitations
 

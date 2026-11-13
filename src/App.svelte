@@ -27,6 +27,7 @@
   } from '@lucide/svelte';
   import Artwork from './lib/Artwork.svelte';
   import TrendChart from './lib/TrendChart.svelte';
+  import MusicPlayer, { type Track } from './lib/MusicPlayer.svelte';
   import {
     defaultFilters,
     modLabel,
@@ -35,6 +36,8 @@
     type Score,
     type Library,
     type Filters,
+    type GameSource,
+    clampPage,
   } from './lib/model';
   import { demoScores } from './lib/demo';
   import {
@@ -44,6 +47,8 @@
     importLazer,
     replayAvailability,
     exportReplay,
+    saveSources,
+    audioTrack,
   } from './lib/backend';
   import { themes } from './lib/themes';
   import type { QueryResult } from './lib/query';
@@ -77,14 +82,23 @@
     message = $state(''),
     importing = $state(false),
     advanced = $state(false);
-  let root = $state(read('sx-root', 'E:\\Games\\osu!')),
-    songs = $state(read('sx-songs', ''));
-  let lazerRoot = $state(read('sx-lazer-root', ''));
+  let gameSources = $state<GameSource[]>(
+    read(
+      'sx-game-sources',
+      [
+        { kind: 'stable' as const, root: read('sx-root', ''), songs: read('sx-songs', '') || null },
+        { kind: 'lazer' as const, root: read('sx-lazer-root', ''), songs: null },
+      ].filter((s) => s.root),
+    ),
+  );
   let replayFolder = $state(read<string>('sx-replay-folder', ''));
   let replayIds = $state.raw(new Set<string>());
   let replayWarning = $state('');
   let exporting = $state('');
   let exportFeedback = $state<{ id: string; text: string } | null>(null);
+  let track = $state.raw<Track | null>(null);
+  let loadingSong = $state(false),
+    songMessage = $state('');
   let selected = $state<Score | null>(null),
     page = $state(0);
   let metric = $state<'stars' | 'pp' | 'accuracy'>(read('sx-metric', 'stars')),
@@ -224,7 +238,7 @@
       try {
         library = await loadLibrary();
         scores = library.scores;
-        if (!lazerRoot) lazerRoot = library.lazerRoot || '';
+        if (library.gameSources) gameSources = library.gameSources;
         defaultPlayer();
       } catch (e) {
         error = String(e);
@@ -253,6 +267,24 @@
       scores.some((s) => s.player === library!.defaultPlayer)
     )
       filters.player = library.defaultPlayer;
+  }
+  async function playSong(score: Score) {
+    loadingSong = true;
+    songMessage = '';
+    try {
+      const url = await audioTrack(score.id);
+      if (!url) {
+        songMessage = 'No installed audio was found for this map.';
+        return;
+      }
+      track = { id: score.id, url, title: score.title, artist: score.artist };
+      songMessage = '';
+      selected = null;
+    } catch (e) {
+      songMessage = String(e);
+    } finally {
+      loadingSong = false;
+    }
   }
   async function chooseReplayFolder(): Promise<string | null> {
     const { open } = await import('@tauri-apps/plugin-dialog');
@@ -284,23 +316,40 @@
       exporting = '';
     }
   }
-  async function choose(which: 'root' | 'songs' | 'lazer') {
+  function addSource(kind: 'stable' | 'lazer') {
+    gameSources.push({ kind, root: '', songs: null });
+    importing = true;
+  }
+  $effect(() => {
+    localStorage.setItem('sx-game-sources', JSON.stringify(gameSources));
+  });
+  async function persistSources() {
+    if (!isDesktop) return;
+    gameSources = await saveSources($state.snapshot(gameSources).filter((s) => s.root.trim()));
+  }
+  async function saveFolders() {
+    try {
+      await persistSources();
+      importing = false;
+      error = '';
+      message = 'Game folders saved. Previously imported scores are kept when a folder is removed.';
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  async function choose(index: number, which: 'root' | 'songs') {
     if (!isDesktop) return;
     const { open } = await import('@tauri-apps/plugin-dialog');
     const path = await open({
       directory: true,
       multiple: false,
       title:
-        which === 'root'
-          ? 'Choose your stable installation'
-          : which === 'lazer'
-            ? 'Choose your lazer data folder'
-            : 'Choose your Songs folder',
+        which === 'songs'
+          ? 'Choose the Songs folder for this install'
+          : `Choose your ${gameSources[index].kind} folder`,
     });
     if (typeof path === 'string') {
-      if (which === 'root') root = path;
-      else if (which === 'lazer') lazerRoot = path;
-      else songs = path;
+      gameSources[index][which] = path;
     }
   }
   async function scan(force = false, target: 'both' | 'stable' | 'lazer' = 'both') {
@@ -310,36 +359,45 @@
     message = 'Reading changed score sources and calculating unfamiliar plays…';
     const problems: string[] = [];
     let latest: Library | null = null;
-    if (target !== 'lazer' && root) {
-      try {
-        latest = await importStable(root, songs || null, force);
-      } catch (e) {
-        problems.push('Stable: ' + String(e));
+    let completed = 0,
+      calculated = 0;
+    try {
+      await persistSources();
+      const selectedSources = $state
+        .snapshot(gameSources)
+        .filter((s) => target === 'both' || s.kind === target);
+      for (const source of selectedSources) {
+        message = `Scanning ${completed + 1} of ${selectedSources.length}: ${source.root}`;
+        try {
+          latest =
+            source.kind === 'stable'
+              ? await importStable(source.root, source.songs, force)
+              : await importLazer(source.root, force);
+          completed++;
+          calculated += latest.calculated;
+        } catch (e) {
+          problems.push(`${source.kind} (${source.root}): ${String(e)}`);
+        }
       }
-    }
-    if (target !== 'stable' && lazerRoot) {
-      try {
-        latest = await importLazer(lazerRoot, force);
-      } catch (e) {
-        problems.push('Lazer: ' + String(e));
-      }
+    } catch (e) {
+      problems.push(String(e));
     }
     if (latest) {
       library = latest;
       scores = latest.scores;
       defaultPlayer();
       sample = false;
-      message = `Library ready · ${latest.stableScores.toLocaleString()} stable records · ${latest.lazerScores.toLocaleString()} lazer records · ${latest.mergedDuplicates.toLocaleString()} matched duplicates · ${latest.sourceUnchanged ? 'source unchanged' : latest.calculated.toLocaleString() + ' calculations saved'}`;
+      message = `Library ready · ${completed} folders checked · ${scores.length.toLocaleString()} combined scores · ${calculated.toLocaleString()} calculations saved`;
     } else message = '';
     error = problems.join(' ');
     busy = false;
-    localStorage.setItem('sx-root', JSON.stringify(root));
-    localStorage.setItem('sx-songs', JSON.stringify(songs));
-    localStorage.setItem('sx-lazer-root', JSON.stringify(lazerRoot));
   }
   function preset(id: string) {
     filters.preset = id;
     section = 'explore';
+  }
+  function goPage(target: number) {
+    page = clampPage(target, result.total, size);
   }
 </script>
 
@@ -375,6 +433,7 @@
         onclick={() => preset(p.id)}><p.icon size={16} />{p.label}</button
       >{/each}
     <div class="sidebar-spacer"></div>
+    <MusicPlayer {track} />
     <div class="local-note">
       <span class="status-dot"></span>{sample
         ? 'Sample library'
@@ -729,12 +788,36 @@
               )}</span
             >
             <div>
-              <button class="button small" disabled={page === 0} onclick={() => page--}
-                ><ChevronLeft size={15} />Previous</button
+              <button
+                class="button small"
+                disabled={searching || page === 0}
+                onclick={() => goPage(0)}>First</button
+              >
+              <button
+                class="button small"
+                aria-label="Back 10 pages"
+                disabled={searching || page === 0}
+                onclick={() => goPage(page - 10)}>−10</button
+              >
+              <button
+                class="button small"
+                disabled={searching || page === 0}
+                onclick={() => goPage(page - 1)}><ChevronLeft size={15} />Previous</button
               ><span>{page + 1} / {Math.ceil(result.total / size)}</span><button
                 class="button small"
-                disabled={(page + 1) * size >= result.total}
-                onclick={() => page++}>Next<ChevronRight size={15} /></button
+                disabled={searching || (page + 1) * size >= result.total}
+                onclick={() => goPage(page + 1)}>Next<ChevronRight size={15} /></button
+              >
+              <button
+                class="button small"
+                aria-label="Forward 10 pages"
+                disabled={searching || (page + 1) * size >= result.total}
+                onclick={() => goPage(page + 10)}>+10</button
+              >
+              <button
+                class="button small"
+                disabled={searching || (page + 1) * size >= result.total}
+                onclick={() => goPage(Math.ceil(result.total / size) - 1)}>Last</button
               >
             </div>
           </div>{/if}
@@ -852,16 +935,16 @@
             <FolderOpen size={22} />
             <h2>Sources & exports</h2>
             <p>Read scores from stable and lazer, and choose where to save replay exports.</p>
-            <div class="source-row">
-              <span>Stable</span><code>{root}</code><button
-                class="text-button"
-                onclick={() => (importing = true)}>Configure</button
-              >
-            </div>
-            <div class="source-row">
-              <span>Lazer</span><code>{lazerRoot}</code><button
-                class="text-button"
-                onclick={() => (importing = true)}>Configure</button
+            {#each gameSources.filter((s) => s.root) as source}<div class="source-row">
+                <span>{source.kind === 'stable' ? 'Stable' : 'Lazer'}</span><code
+                  >{source.root}</code
+                ><button class="text-button" onclick={() => (importing = true)}>Configure</button>
+              </div>{/each}
+            <div class="setting-actions">
+              <button class="button small" onclick={() => addSource('stable')}
+                >Add stable folder</button
+              ><button class="button small" onclick={() => addSource('lazer')}
+                >Add lazer folder</button
               >
             </div>
             <div class="source-row replay-folder-row">
@@ -879,7 +962,7 @@
             {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
             <div class="setting-actions">
               <button class="button" disabled={busy || !isDesktop} onclick={() => scan()}
-                ><RefreshCw size={16} />Rescan both sources</button
+                ><RefreshCw size={16} />Rescan all folders</button
               ><button
                 class="text-button"
                 disabled={busy || !isDesktop}
@@ -970,7 +1053,7 @@
                 onclick={async () => {
                   library = await loadLibrary();
                   scores = library.scores;
-                  if (!lazerRoot) lazerRoot = library.lazerRoot || '';
+                  if (library.gameSources) gameSources = library.gameSources;
                   sample = false;
                 }}>Return to imported library</button
               >{/if}
@@ -1012,44 +1095,60 @@
         >
       </div>
       <p>
-        Choose stable and/or lazer data folders. Your game files stay read only; leave an unused
-        source blank.
+        Add as many stable and lazer folders as you use. Each stable install can have its own Songs
+        folder. Removing a path keeps its imported score history.
       </p>
-      <label class="form-label"
-        >Stable installation
-        <div class="path-input">
-          <input bind:value={root} placeholder="E:\Games\osu!" /><button
-            class="icon-button"
-            aria-label="Choose stable folder"
-            onclick={() => choose('root')}
-            disabled={!isDesktop}><FolderOpen size={18} /></button
+      {#each gameSources as source, i}<div class="install-entry">
+          <div class="install-heading">
+            <label
+              >Client<select aria-label={`Client for folder ${i + 1}`} bind:value={source.kind}
+                ><option value="stable">stable</option><option value="lazer">lazer</option></select
+              ></label
+            ><button
+              class="text-button"
+              aria-label={`Remove folder ${i + 1}`}
+              onclick={() => gameSources.splice(i, 1)}>Remove</button
+            >
+          </div>
+          <label class="form-label"
+            >Game folder {i + 1}
+            <div class="path-input">
+              <input
+                aria-label={`Game folder ${i + 1}`}
+                bind:value={source.root}
+                placeholder={source.kind === 'stable'
+                  ? 'Folder containing scores.db'
+                  : 'Folder containing client.realm'}
+              /><button
+                class="icon-button"
+                aria-label={`Choose game folder ${i + 1}`}
+                onclick={() => choose(i, 'root')}
+                disabled={!isDesktop}><FolderOpen size={18} /></button
+              >
+            </div></label
           >
-        </div></label
-      ><label class="form-label"
-        >Custom Songs folder <span class="muted">optional</span>
-        <div class="path-input">
-          <input
-            bind:value={songs}
-            placeholder="Defaults to the installation’s Songs folder"
-          /><button
-            class="icon-button"
-            aria-label="Choose Songs folder"
-            onclick={() => choose('songs')}
-            disabled={!isDesktop}><FolderOpen size={18} /></button
-          >
-        </div></label
-      >
-      <label class="form-label"
-        >Lazer data folder
-        <div class="path-input">
-          <input bind:value={lazerRoot} placeholder="Folder containing client.realm" /><button
-            class="icon-button"
-            aria-label="Choose lazer folder"
-            onclick={() => choose('lazer')}
-            disabled={!isDesktop}><FolderOpen size={18} /></button
-          >
-        </div></label
-      >
+          {#if source.kind === 'stable'}<label class="form-label"
+              >Custom Songs folder <span class="muted">optional</span>
+              <div class="path-input">
+                <input
+                  aria-label={`Songs folder ${i + 1}`}
+                  bind:value={source.songs}
+                  placeholder="Defaults to this install’s Songs folder"
+                /><button
+                  class="icon-button"
+                  aria-label={`Choose Songs folder ${i + 1}`}
+                  onclick={() => choose(i, 'songs')}
+                  disabled={!isDesktop}><FolderOpen size={18} /></button
+                >
+              </div></label
+            >{/if}
+        </div>{/each}
+      <div class="setting-actions">
+        <button class="button" onclick={() => addSource('stable')}>Add stable folder</button><button
+          class="button"
+          onclick={() => addSource('lazer')}>Add lazer folder</button
+        >
+      </div>
       <div class="insight-note">
         <Info size={17} />
         <p>
@@ -1063,9 +1162,13 @@
           here.
         </p>{/if}
       <div class="modal-actions">
-        <button class="button" onclick={() => (importing = false)}>Cancel</button><button
+        <button class="button" onclick={() => (importing = false)}>Close</button><button
+          class="button"
+          disabled={!isDesktop || busy}
+          onclick={saveFolders}>Save folders</button
+        ><button
           class="button primary"
-          disabled={!isDesktop || (!root && !lazerRoot) || busy}
+          disabled={!isDesktop || !gameSources.some((s) => s.root.trim()) || busy}
           onclick={() => scan()}><Database size={16} />Import scores</button
         >
       </div>
@@ -1096,6 +1199,12 @@
       </div>
       <div class="detail-content">
         <div class="detail-pills">
+          <button
+            class="button small"
+            disabled={!isDesktop || loadingSong}
+            onclick={() => selected && playSong(selected)}
+            >{loadingSong ? 'Finding audio…' : 'Play song'}</button
+          >
           {#if replayIds.has(selected.id)}<button
               class="button small"
               disabled={!!exporting}
@@ -1115,6 +1224,7 @@
           <div><span>PP if FC</span><strong class="pink">{number(selected.fcPp, 1)}</strong></div>
           <div><span>Accuracy</span><strong>{number(selected.accuracy, 2)}%</strong></div>
         </div>
+        {#if songMessage}<p role="status">{songMessage}</p>{/if}
         {#if exportFeedback?.id === selected.id}<p role="status">{exportFeedback.text}</p>{/if}
         <dl class="score-facts">
           <dt>Combo</dt>
