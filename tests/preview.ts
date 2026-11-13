@@ -24,7 +24,8 @@ localStorage.setItem(
 if (new URLSearchParams(location.search).has('fresh')) localStorage.removeItem('sx-replay-folder');
 const events: string[] = [];
 let calculator = 'lazer';
-let downloadStep = -1;
+const holdDownloads = new URLSearchParams(location.search).get('downloads') === 'active';
+let downloadStep = holdDownloads ? 0 : -1;
 let downloadPaused = false;
 let sources = [
   { kind: 'stable', root: 'C:\\Games\\osu!', songs: null },
@@ -99,7 +100,7 @@ Object.assign(window, {
         };
       if (command === 'select_calculator') calculator = String(args.calculator);
       if (command === 'download_status') {
-        if (downloadStep >= 0 && !downloadPaused) downloadStep++;
+        if (downloadStep >= 0 && !downloadPaused && !holdDownloads) downloadStep++;
         const done = downloadStep >= 5;
         return {
           running: downloadStep >= 0 && !done && !downloadPaused,
@@ -124,6 +125,8 @@ Object.assign(window, {
           bytes: done ? 0 : 1048576,
           totalBytes: 2097152,
           installedSets: done ? 1 : 0,
+          activeDownloads: downloadStep >= 0 && !done && !downloadPaused ? 3 : 0,
+          downloadedSets: done ? 1 : 0,
           updates:
             downloadStep === 5
               ? [{ ...scores[0], pp: 999, fcPp: 1001, title: 'Recovered song' }]

@@ -496,10 +496,23 @@ fn provided_downloader_runs_three_downloads_concurrently_with_one_score_writer()
             c.join().unwrap();
         }
     });
-    let mirrors = vec![osu_downloader::Mirror::custom(format!("{base}/{{id}}?noVideo=1")).unwrap()];
+    let cold = TcpListener::bind("127.0.0.1:0").unwrap();
+    cold.set_nonblocking(true).unwrap();
+    let mirrors = vec![
+        osu_downloader::Mirror::custom(format!("{base}/{{id}}?noVideo=1")).unwrap(),
+        osu_downloader::Mirror::custom(format!(
+            "http://localhost:{}/{{id}}",
+            cold.local_addr().unwrap().port()
+        ))
+        .unwrap(),
+    ];
     let ctl = Arc::new(Controller::default());
     super::queue::run_with(&path, options(&songs), ctl.clone(), mirrors).unwrap();
     network.join().unwrap();
+    assert!(
+        cold.accept().is_err(),
+        "Healthy primary downloads must not spill onto a cold fallback just to avoid normal request spacing"
+    );
     assert!(
         observed.load(Ordering::Acquire) >= 2,
         "Requests should overlap"
@@ -516,5 +529,100 @@ fn provided_downloader_runs_three_downloads_concurrently_with_one_score_writer()
         3
     );
     drop(c);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn silent_response_headers_release_the_download_slot_and_use_another_mirror() {
+    use std::sync::atomic::AtomicUsize;
+    let (root, _, _) = fixture("silent-mirror");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let bad = format!("http://{}", listener.local_addr().unwrap());
+    let stop = Arc::new(AtomicBool::new(false));
+    let quit = stop.clone();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let observed = attempts.clone();
+    let stalled = std::thread::spawn(move || {
+        let mut sockets = Vec::new();
+        while !quit.load(Ordering::Acquire) {
+            if let Ok((socket, _)) = listener.accept() {
+                observed.fetch_add(1, Ordering::AcqRel);
+                sockets.push(socket);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+    let bytes = map("Healthy fallback");
+    let zipped = archive(&[("map.osu", &bytes)]);
+    let (good, requests, server) = server(vec![(
+        200,
+        "Content-Type: application/octet-stream\r\n",
+        zipped,
+    )]);
+    let mirrors = vec![
+        osu_downloader::Mirror::custom(format!("{bad}/{{id}}")).unwrap(),
+        osu_downloader::Mirror::custom(format!("{good}/{{id}}")).unwrap(),
+    ];
+    let downloader = super::queue::downloader_with_timeout(
+        mirrors,
+        osu_downloader::SchedulerHandle::new(),
+        Duration::from_millis(150),
+    )
+    .unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let start = Instant::now();
+    let result = runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_secs(8),
+            downloader.download_many([5], &root).wait(),
+        )
+        .await
+    });
+    stop.store(true, Ordering::Release);
+    stalled.join().unwrap();
+    server.join().unwrap();
+    assert!(
+        result.is_ok(),
+        "Silent headers must not hold a slot indefinitely"
+    );
+    result.unwrap().unwrap();
+    assert!(start.elapsed() < Duration::from_secs(8));
+    assert_eq!(
+        attempts.load(Ordering::Acquire),
+        3,
+        "Bound every retry before trying another source"
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert!(
+        fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|f| f.path().extension().is_some_and(|e| e == "osz"))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[ignore = "Explicit production downloader live check in an isolated temporary Songs folder"]
+fn live_production_download_uses_bounded_concurrent_pipeline() {
+    let (root, songs, path) = fixture("live-production");
+    let c = library::db(&path).unwrap();
+    let hash = "00000000000000000000000000000001";
+    score(&c, "live", hash, "Friend");
+    c.execute("INSERT INTO map_ids VALUES(?1,1,1,'catalog')", [hash])
+        .unwrap();
+    drop(c);
+    let ctl = Arc::new(Controller::default());
+    let started = Instant::now();
+    super::queue::run_with(&path, options(&songs), ctl.clone(), super::queue::sources()).unwrap();
+    let status = ctl.status();
+    assert_eq!(status.downloaded_sets, 1, "{:?}", status.issues);
+    assert_eq!(status.installed_sets, 1);
+    assert_eq!(status.active_downloads, 0);
+    println!(
+        "Production downloader fetched and installed one public set in {:.2}s",
+        started.elapsed().as_secs_f64()
+    );
     fs::remove_dir_all(root).unwrap();
 }

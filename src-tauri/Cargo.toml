@@ -1,6 +1,6 @@
 [package]
 name = "score-explorer"
-version = "0.6.0"
+version = "0.6.1"
 description = "Local osu! score explorer"
 edition = "2024"
 default-run = "score-explorer"
@@ -29,7 +29,7 @@ reqwest = { version = "0.13", default-features = false, features = ["blocking", 
 zip = { version = "2", default-features = false, features = ["deflate"] }
 rosu-pp = "=4.0.1"
 lazer-pp = { package = "rosu-pp-gemini", git = "https://github.com/Raregendary/rosu-pp-gemini", rev = "ba1741510d798c35f86b8aec6e026d5cb5399571" }
-osu-downloader = { git = "https://github.com/DesireThings/osu-shelf-legacy", rev = "17ee63688d6b29bc8dede70be92aac44534fdc18", default-features = false }
+osu-downloader = { git = "https://github.com/DesireThings/osu-shelf-legacy", rev = "17ee63688d6b29bc8dede70be92aac44534fdc18", default-features = false, features = ["test-helpers"] }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "macros"] }
 futures-util = "0.3"
 rosu-mods = { version = "0.4.1", features = ["serde"] }

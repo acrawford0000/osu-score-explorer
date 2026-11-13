@@ -28,6 +28,8 @@ export type DownloadOptions = {
   clientSecret: string;
 };
 export type DownloadStatus = {
+  activeDownloads?: number;
+  downloadedSets?: number;
   running: boolean;
   phase: string;
   message: string;

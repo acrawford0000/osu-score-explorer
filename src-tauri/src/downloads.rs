@@ -43,6 +43,8 @@ pub struct Status {
     pub bytes: u64,
     pub total_bytes: Option<u64>,
     pub installed_sets: usize,
+    pub active_downloads: usize,
+    pub downloaded_sets: usize,
     pub updates: Vec<Score>,
     pub issues: Vec<String>,
 }
@@ -753,6 +755,11 @@ fn run_http(
     Ok(())
 }
 pub fn finish(ctl: &Controller, result: Result<(), String>) {
+    ctl.change(|s| {
+        s.active_downloads = 0;
+        s.bytes = 0;
+        s.total_bytes = None;
+    });
     if let Err(e) = result {
         ctl.change(|s| {
             s.running = false;
