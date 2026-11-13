@@ -197,7 +197,7 @@ fn stable_filename(s: &Score) -> Option<String> {
         + 116_444_736_000_000_000;
     Some(format!("{}-{ticks}.osr", s.map_hash))
 }
-fn records(c: &Connection, id: &str) -> Result<Vec<Score>, String> {
+pub(crate) fn records(c: &Connection, id: &str) -> Result<Vec<Score>, String> {
     let mut q = c.prepare("SELECT data FROM scores WHERE id=?1 OR id IN (SELECT alias_id FROM score_links WHERE canonical_id=?1) ORDER BY id DESC").map_err(|e|e.to_string())?;
     q.query_map([id], |r| r.get::<_, String>(0))
         .map_err(|e| e.to_string())?
@@ -283,6 +283,7 @@ pub fn availability(
         if rows
             .iter()
             .any(|s| candidates(&c, s).iter().any(|f| verified(f, s).is_ok()))
+            || crate::online_replays::saved_bytes(&c, id, &rows)?.is_some()
         {
             available.push(ReplayInfo {
                 id: id.clone(),
@@ -292,16 +293,14 @@ pub fn availability(
     }
     Ok(Availability { available, warning })
 }
-pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String> {
+pub(crate) fn destination(c: &Connection, directory: &Path) -> Result<PathBuf, String> {
     let directory = directory
         .canonicalize()
         .map_err(|_| "Choose an existing replay export folder".to_string())?;
     if !directory.is_dir() {
         return Err("Replay export destination must be a folder".into());
     }
-    let c = library::db(path)?;
-    table(&c)?;
-    for source in crate::sources::list(&c)? {
+    for source in crate::sources::list(c)? {
         if let Ok(base) = PathBuf::from(&source.root)
             .join(if source.kind == "stable" {
                 "Data"
@@ -314,6 +313,12 @@ pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String
             return Err("Choose a folder outside the game's internal data storage".into());
         }
     }
+    Ok(directory)
+}
+pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String> {
+    let c = library::db(path)?;
+    table(&c)?;
+    destination(&c, directory)?;
     let rows = records(&c, id)?;
     let mut found = None;
     for score in &rows {
@@ -327,9 +332,22 @@ pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String
             break;
         }
     }
-    let bytes = found.ok_or(
-        "A matching local replay is no longer available. Check your game folders and rescan.",
-    )?;
+    let bytes = found
+        .or(crate::online_replays::saved_bytes(&c, id, &rows)?)
+        .ok_or(
+            "A matching local replay is no longer available. Check your game folders and rescan.",
+        )?;
+    save(path, id, directory, &bytes)
+}
+pub(crate) fn save(
+    path: &Path,
+    id: &str,
+    directory: &Path,
+    bytes: &[u8],
+) -> Result<PathBuf, String> {
+    let c = library::db(path)?;
+    let directory = destination(&c, directory)?;
+    let rows = records(&c, id)?;
     let name = filename(rows.first().ok_or("Unknown score")?);
     let stem = name.trim_end_matches(".osr");
     for index in 0..10_000 {
@@ -344,7 +362,7 @@ pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String
             .open(&destination)
         {
             Ok(mut output) => {
-                if let Err(e) = output.write_all(&bytes).and_then(|_| output.sync_all()) {
+                if let Err(e) = output.write_all(bytes).and_then(|_| output.sync_all()) {
                     drop(output);
                     let _ = fs::remove_file(&destination);
                     return Err(e.to_string());
@@ -359,12 +377,12 @@ pub fn export(path: &Path, id: &str, directory: &Path) -> Result<PathBuf, String
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    fn score(source: &str) -> Score {
+    pub(crate) fn score(source: &str) -> Score {
         serde_json::from_value(serde_json::json!({"id":format!("{source}:fixture"),"mapHash":"0123456789abcdef0123456789abcdef","player":"Fixture","date":"2017-01-01T00:00:00Z","mode":0,"title":"Title?","artist":"Artist","difficulty":"Test","mapper":"Test","mods":0,"n300":99,"n100":1,"n50":0,"misses":0,"combo":100,"maxCombo":100,"rawScore":12345,"accuracy":99.0,"fc":true,"ss":false,"stars":null,"pp":null,"fcPp":null,"source":source,"status":"Fixture","hasArtwork":false})).unwrap()
     }
-    fn replay_bytes(score: &Score, version: u32) -> Vec<u8> {
+    pub(crate) fn replay_bytes(score: &Score, version: u32) -> Vec<u8> {
         let replay = osu_db::Replay {
             mode: osu_db::Mode::Standard,
             version,

@@ -49,6 +49,10 @@
     importLazer,
     replayAvailability,
     exportReplay,
+    connectOnlineReplays,
+    disconnectOnlineReplays,
+    checkOnlineReplay,
+    type OnlineReplayStatus,
     saveSources,
     audioTrack,
     startDownloads,
@@ -129,6 +133,13 @@
   });
   let replayIds = $state.raw(new Set<string>());
   let replayWarning = $state('');
+  let onlineEnabled = $state(read<boolean>('sx-online-replays', true));
+  let onlineConnected = $state(false),
+    onlineConnecting = $state(false),
+    onlineChecking = $state(false);
+  let onlineWarning = $state(''),
+    onlineEpoch = $state(0);
+  let onlineReplays = $state.raw(new Map<string, OnlineReplayStatus>());
   let exporting = $state('');
   let exportFeedback = $state<{ id: string; text: string } | null>(null);
   let track = $state.raw<Track | null>(null);
@@ -234,28 +245,65 @@
       return s ? [s] : [];
     }),
   );
+  let replayPageKey = $derived(
+    JSON.stringify([...new Set([...(selected ? [selected.id] : []), ...visible.map((s) => s.id)])]),
+  );
   $effect(() => {
     localStorage.setItem('sx-replay-folder', JSON.stringify(replayFolder));
   });
   $effect(() => {
-    const ids = [...new Set([...visible.map((s) => s.id), ...(selected ? [selected.id] : [])])];
+    localStorage.setItem('sx-online-replays', JSON.stringify(onlineEnabled));
+  });
+  $effect(() => {
+    const ids: string[] = JSON.parse(replayPageKey);
+    const online = onlineEnabled && onlineConnected;
+    onlineChecking = false;
+    void onlineEpoch;
     if (!isDesktop || sample || !ids.length) {
       replayIds = new Set();
       return;
     }
     let active = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     replayIds = new Set();
     replayAvailability(ids)
-      .then((status) => {
+      .then(async (status) => {
         if (!active) return;
         replayIds = new Set(status.available.map((r) => r.id));
         replayWarning = status.warning || '';
+        if (!online) return;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        if (!active) return;
+        onlineChecking = true;
+        try {
+          for (const id of ids.filter((id) => !status.available.some((r) => r.id === id))) {
+            if (!active) break;
+            const result = await checkOnlineReplay(id);
+            if (!active) break;
+            onlineReplays = new Map(onlineReplays).set(id, result);
+            if (result.state === 'rate-limited') {
+              onlineWarning = result.message;
+              retry = setTimeout(
+                () => {
+                  if (active) onlineEpoch++;
+                },
+                Math.max(1, result.retryAfter || 60) * 1000,
+              );
+              break;
+            }
+          }
+        } catch (e) {
+          if (active) onlineWarning = String(e);
+        } finally {
+          if (active) onlineChecking = false;
+        }
       })
       .catch((e) => {
         if (active) replayWarning = String(e);
       });
     return () => {
       active = false;
+      if (retry) clearTimeout(retry);
     };
   });
   onMount(() => {
@@ -474,7 +522,8 @@
     try {
       const folder = replayFolder || (await chooseReplayFolder());
       if (!folder) return;
-      const destination = await exportReplay(score.id, folder);
+      const destination = await exportReplay(score.id, folder, !replayIds.has(score.id));
+      replayIds = new Set(replayIds).add(score.id);
       message = `Replay saved to ${destination}`;
       exportFeedback = { id: score.id, text: message };
       error = '';
@@ -484,6 +533,26 @@
     } finally {
       exporting = '';
     }
+  }
+  async function connectReplays() {
+    onlineConnecting = true;
+    onlineWarning = '';
+    try {
+      await connectOnlineReplays(apiClientId.trim(), apiClientSecret.trim());
+      onlineConnected = true;
+      onlineEpoch++;
+    } catch (e) {
+      onlineWarning = String(e);
+    } finally {
+      onlineConnecting = false;
+    }
+  }
+  async function disconnectReplays() {
+    await disconnectOnlineReplays();
+    onlineConnected = false;
+    onlineChecking = false;
+    onlineReplays = new Map();
+    onlineWarning = '';
   }
   async function changeCalculator(value: string) {
     selectingCalculator = true;
@@ -1015,13 +1084,19 @@
                     >{(score.sources?.length ? score.sources : [score.source]).join(' + ')}<span
                       class="middot">·</span
                     >{score.player}</span
-                  >{#if replayIds.has(score.id)}<button
+                  >{#if replayIds.has(score.id) || (onlineEnabled && onlineConnected && onlineReplays.get(score.id)?.state === 'available')}<button
                       class="replay-button"
                       disabled={!!exporting}
-                      title="Export local replay (.osr)"
+                      title={replayIds.has(score.id)
+                        ? 'Export local replay (.osr)'
+                        : 'Download online replay (.osr)'}
                       aria-label={`Export replay for ${score.title}`}
                       onclick={() => downloadReplay(score)}
-                      ><Download size={13} />{exporting === score.id ? 'Saving…' : 'Replay'}</button
+                      ><Download size={13} />{exporting === score.id
+                        ? 'Saving…'
+                        : replayIds.has(score.id)
+                          ? 'Replay'
+                          : 'Online replay'}</button
                     >{:else}<ArrowUpRight size={14} />{/if}
                 </div>
               </article>{/each}
@@ -1232,6 +1307,78 @@
               <button class="text-button" onclick={() => (replayFolder = '')}>Clear default</button>
             </div>
             {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
+            <details class="online-replay-settings">
+              <summary>Online replays</summary>
+              <label class="download-toggle"
+                ><input type="checkbox" bind:checked={onlineEnabled} />Check online when a local
+                replay is missing</label
+              >
+              <p class="muted">
+                Checks visible scores in the background, including imported friends’ scores.
+                Available replays download to your replay export folder. Some scores have no
+                retained online replay or online score ID.
+              </p>
+              <p class="muted">
+                Connect your osu! API application with public access. This uses the same client ID
+                and secret as beatmap lookup; your friend does not need to sign in. Credentials stay
+                in memory for this session.
+              </p>
+              <a href="https://osu.ppy.sh/home/account/edit#oauth" target="_blank" rel="noreferrer"
+                >Manage osu! API applications</a
+              >
+              <div class="download-api-fields">
+                <label class="form-label"
+                  >Client ID<input
+                    aria-label="Replay API client ID"
+                    bind:value={apiClientId}
+                    inputmode="numeric"
+                    autocomplete="off"
+                    disabled={onlineConnecting}
+                  /></label
+                >
+                <label class="form-label"
+                  >Client secret<input
+                    aria-label="Replay API client secret"
+                    type="password"
+                    bind:value={apiClientSecret}
+                    autocomplete="off"
+                    disabled={onlineConnecting}
+                  /></label
+                >
+              </div>
+              <div class="setting-actions">
+                <button
+                  class="button"
+                  disabled={!isDesktop ||
+                    onlineConnecting ||
+                    !apiClientId.trim() ||
+                    !apiClientSecret.trim()}
+                  onclick={connectReplays}
+                  >{onlineConnecting
+                    ? 'Connecting…'
+                    : onlineConnected
+                      ? 'Reconnect API'
+                      : 'Connect osu! API'}</button
+                >
+                {#if onlineConnected}<button class="button" onclick={disconnectReplays}
+                    >Disconnect</button
+                  ><button
+                    class="text-button"
+                    onclick={() => {
+                      onlineWarning = '';
+                      onlineEpoch++;
+                    }}>Retry online checks</button
+                  >{/if}
+              </div>
+              <p class="muted">
+                {onlineConnected
+                  ? 'Connected for this session.'
+                  : 'Not connected. Local replay exports work without an API connection.'}{onlineChecking
+                  ? ' Checking online replays…'
+                  : ''}
+              </p>
+              {#if onlineWarning}<p role="status">{onlineWarning}</p>{/if}
+            </details>
             <DownloadPanel
               bind:automatic={automaticDownloads}
               bind:songs={downloadSongs}
@@ -1580,14 +1727,24 @@
             onclick={() => selected && playSong(selected)}
             >{loadingSong ? 'Finding audio…' : 'Play song'}</button
           >
-          {#if replayIds.has(selected.id)}<button
+          {#if replayIds.has(selected.id) || (onlineEnabled && onlineConnected && onlineReplays.get(selected.id)?.state === 'available')}<button
               class="button small"
               disabled={!!exporting}
               onclick={() => selected && downloadReplay(selected)}
               ><Download size={14} />{exporting === selected.id
                 ? 'Saving…'
-                : 'Export replay (.osr)'}</button
+                : replayIds.has(selected.id)
+                  ? 'Export replay (.osr)'
+                  : 'Download online replay (.osr)'}</button
             >{/if}
+          {#if !replayIds.has(selected.id)}<p class="muted">
+              {onlineEnabled && onlineConnected
+                ? onlineReplays.get(selected.id)?.message ||
+                  (onlineChecking
+                    ? 'Checking for an online replay…'
+                    : 'Online replay not checked yet.')
+                : 'No local replay found. Connect online replays in Settings to check osu!.'}
+            </p>{/if}
           <span class="mod-badge">{scoreMods(selected)}</span><span class="stars"
             >★ {number(selected.stars, 2)}</span
           >{#if selected.fc}<span class="sample-badge">FULL COMBO</span>{/if}<span class="muted"

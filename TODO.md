@@ -4,12 +4,12 @@
 
 - [x] Detect available local replay data without requiring a manual replay export.
 - [x] Check stable's local replay storage and lazer's score file references; verify the matching score and map revision.
-- [ ] Distinguish local replay available, online replay downloadable, not found, and not checked yet.
+- [x] Distinguish local replay available, online replay downloadable, not found, and not checked yet.
 - [x] Add an accessible export button to cards and details with a verified local replay.
 - [x] Export the complete original `.osr` file without changing the source, including lazer extensions.
 - [x] Remember a default export folder, prompt on the first export if unset, and avoid overwriting existing exports.
 - [ ] Offer **Open in osu!** as a separate optional action; verify launch support for each client before choosing a default playback flow.
-- [ ] Offer an explicit download action for an available online replay and handle authentication or unavailable downloads.
+- [x] Offer an explicit download action for an available online replay and handle authentication or unavailable downloads.
 - [x] Cache the lazer replay-reference index and refresh when the database changes; check visible scores in background threads and revalidate before export.
 - [x] Test older retained replays, merged copies, missing map files, missing replay files, mismatched replay data, and preservation of lazer extensions.
 

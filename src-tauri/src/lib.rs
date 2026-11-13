@@ -4,6 +4,8 @@ pub mod downloads;
 pub mod lazer;
 pub mod library;
 pub mod maps;
+pub mod online_replays;
+pub mod osu_api;
 pub mod player_profiles;
 pub mod players;
 pub mod recovery;
@@ -25,6 +27,7 @@ mod desktop {
         path: PathBuf,
         importing: Arc<AtomicBool>,
         replay_lock: Arc<Mutex<()>>,
+        online_replays: Arc<crate::online_replays::Service>,
         downloads: Arc<crate::downloads::Controller>,
         calculators: Arc<crate::calculators::Controller>,
     }
@@ -168,6 +171,31 @@ mod desktop {
         .map_err(|e| e.to_string())?
     }
     #[tauri::command]
+    async fn connect_online_replays(
+        credentials: crate::online_replays::Credentials,
+        state: State<'_, Store>,
+    ) -> Result<(), String> {
+        let service = state.online_replays.clone();
+        tauri::async_runtime::spawn_blocking(move || service.connect(credentials))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    fn disconnect_online_replays(state: State<'_, Store>) {
+        state.online_replays.disconnect();
+    }
+    #[tauri::command]
+    async fn check_online_replay(
+        id: String,
+        state: State<'_, Store>,
+    ) -> Result<crate::online_replays::Status, String> {
+        let path = state.path.clone();
+        let service = state.online_replays.clone();
+        tauri::async_runtime::spawn_blocking(move || service.check(&path, &id))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
     async fn replay_availability(
         ids: Vec<String>,
         state: State<'_, Store>,
@@ -186,12 +214,18 @@ mod desktop {
     async fn export_replay(
         id: String,
         directory: String,
+        online: Option<bool>,
         state: State<'_, Store>,
     ) -> Result<String, String> {
         let path = state.path.clone();
+        let service = state.online_replays.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            crate::replays::export(&path, &id, &PathBuf::from(directory))
-                .map(|p| p.to_string_lossy().to_string())
+            if online.unwrap_or(false) {
+                service.export(&path, &id, &PathBuf::from(directory))
+            } else {
+                crate::replays::export(&path, &id, &PathBuf::from(directory))
+            }
+            .map(|p| p.to_string_lossy().to_string())
         })
         .await
         .map_err(|e| e.to_string())?
@@ -272,6 +306,7 @@ mod desktop {
                     path: directory.join("library.sqlite"),
                     importing: Arc::new(AtomicBool::new(false)),
                     replay_lock: Arc::new(Mutex::new(())),
+                    online_replays: Arc::new(crate::online_replays::Service::default()),
                     downloads,
                     calculators: Arc::new(crate::calculators::Controller::default()),
                 });
@@ -283,6 +318,9 @@ mod desktop {
                 import_lazer,
                 artwork,
                 replay_availability,
+                connect_online_replays,
+                disconnect_online_replays,
+                check_online_replay,
                 export_replay,
                 save_sources,
                 audio_track,

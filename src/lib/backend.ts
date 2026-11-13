@@ -18,8 +18,19 @@ export const replayAvailability = (ids: string[]) =>
     'replay_availability',
     { ids },
   );
-export const exportReplay = (id: string, directory: string) =>
-  invoke<string>('export_replay', { id, directory });
+export const exportReplay = (id: string, directory: string, online = false) =>
+  invoke<string>('export_replay', { id, directory, online });
+export type OnlineReplayStatus = {
+  id: string;
+  state: string;
+  message: string;
+  retryAfter: number | null;
+};
+export const connectOnlineReplays = (clientId: string, clientSecret: string) =>
+  invoke<void>('connect_online_replays', { credentials: { clientId, clientSecret } });
+export const disconnectOnlineReplays = () => invoke<void>('disconnect_online_replays');
+export const checkOnlineReplay = (id: string) =>
+  invoke<OnlineReplayStatus>('check_online_replay', { id });
 
 export type DownloadOptions = {
   songs: string;

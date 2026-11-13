@@ -27,6 +27,10 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 
 Export available local **stable and lazer replays** as `.osr` files from score cards or score details. Choose a default export folder in Settings, or let the app ask on your first export and remember your choice. Exporting another copy keeps existing files safe.
 
+Missing a local replay? Connect **Online replays** in Settings to check osu! for available recordings, including when browsing a friend's imported score history. Cards show an **Online replay** button when one is available. Downloads use your replay export folder and can be exported again locally afterward. Some scores have no online recording or submitted score ID.
+
+Online checks require your osu! API application's client ID and secret; your friend does not need to sign in. Enter them under **Sources & exports → Online replays**. They are used for the current session only.
+
 ## Hear an old favorite again
 
 Open a score and choose **Play song** to listen to its installed beatmap audio from the beginning. Keep browsing with compact sidebar controls, expand them for seeking and volume, or drag a floating player wherever you want within the app.
@@ -63,7 +67,7 @@ Choose **Lazer 2026 rules** or the previous **rosu-pp** calculator in Settings. 
 
 ## Project status
 
-This is an early desktop preview under active development. Online replay downloads, opening replays directly in osu!, saved views, retry lists, and more ways to compare attempts are on the [roadmap](TODO.md).
+This is an early desktop preview under active development. Opening replays directly in osu!, saved views, retry lists, and more ways to compare attempts are on the [roadmap](TODO.md).
 
 [Development and running from source](docs/development.md)
 

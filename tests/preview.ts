@@ -23,6 +23,8 @@ localStorage.setItem(
 );
 if (new URLSearchParams(location.search).has('fresh')) localStorage.removeItem('sx-replay-folder');
 const events: string[] = [];
+const onlineFixture = new URLSearchParams(location.search).get('replays') === 'online';
+const exportedReplays = new Set<string>();
 let calculator = 'lazer';
 const holdDownloads = new URLSearchParams(location.search).get('downloads') === 'active';
 let downloadStep = holdDownloads ? 0 : -1;
@@ -77,6 +79,19 @@ Object.assign(window, {
   __TAURI_INTERNALS__: {
     convertFileSrc: (path: string) => path,
     invoke: async (command: string, args: Record<string, unknown>) => {
+      if (command === 'connect_online_replays' || command === 'disconnect_online_replays') return;
+      if (command === 'check_online_replay') {
+        const id = String(args.id);
+        const available = Number(id.split(':')[0]) % 2 === 0;
+        return {
+          id,
+          state: available ? 'available' : 'unavailable',
+          message: available
+            ? 'Online replay available'
+            : 'No online replay is available for this score',
+          retryAfter: null,
+        };
+      }
       if (command === 'calculation_status')
         return {
           running: false,
@@ -191,7 +206,9 @@ Object.assign(window, {
       }
       if (command === 'replay_availability')
         return {
-          available: (args.ids as string[]).map((id) => ({ id, filename: 'sample.osr' })),
+          available: (args.ids as string[])
+            .filter((id) => !onlineFixture || exportedReplays.has(id))
+            .map((id) => ({ id, filename: 'sample.osr' })),
           warning: null,
         };
       if (command === 'plugin:dialog|open') {
@@ -200,6 +217,8 @@ Object.assign(window, {
         return 'Test exports';
       }
       if (command === 'export_replay') {
+        exportedReplays.add(String(args.id));
+        if (args.online) events.push('online replay download');
         events.push(`export to ${args.directory}`);
         report();
         return 'Test exports/sample.osr';

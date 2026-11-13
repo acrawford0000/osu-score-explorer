@@ -303,6 +303,7 @@ impl Http {
         ctl: &Controller,
     ) -> Result<reqwest::blocking::Response, String> {
         for attempt in 0..3 {
+            crate::osu_api::pace(&self.api, || ctl.pause.load(Ordering::Acquire))?;
             if ctl.pause.load(Ordering::Acquire) {
                 return Err("Paused".into());
             }

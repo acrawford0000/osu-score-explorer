@@ -1,6 +1,6 @@
 [package]
 name = "score-explorer"
-version = "0.6.1"
+version = "0.7.0"
 description = "Local osu! score explorer"
 edition = "2024"
 default-run = "score-explorer"
