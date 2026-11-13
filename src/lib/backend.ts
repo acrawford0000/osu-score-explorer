@@ -86,3 +86,6 @@ export const refreshPlayerIdentity = (id: number) =>
   );
 
 export const openApiRegistration = () => invoke<void>('open_osu_api_settings');
+
+export const openScorePage = (link: { scoreId: string; mode: number; legacy: boolean }) =>
+  invoke<void>('open_score_page', link);

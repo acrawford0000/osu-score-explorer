@@ -490,8 +490,11 @@ fn verify(bytes: &[u8], rows: &[Score]) -> Result<(), String> {
             && u32::from(replay.count_100) == s.n100
             && u32::from(replay.count_50) == s.n50
             && u32::from(replay.count_miss) == s.misses
-            && u32::from(replay.count_geki) == s.n_geki
-            && u32::from(replay.count_katsu) == s.n_katu
+            // Standard's combo-end bonuses are absent from reconstructed web
+            // replay headers. Taiko does not use these counters. Catch's katu
+            // (tiny-droplet misses) and mania's geki/katu are real judgments.
+            && (s.mode != 3 || u32::from(replay.count_geki) == s.n_geki)
+            && (!matches!(s.mode, 2 | 3) || u32::from(replay.count_katsu) == s.n_katu)
             && (s.gameplay_lazer || s.raw_score == replay.score)
     }) {
         return Err(

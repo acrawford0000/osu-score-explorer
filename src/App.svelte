@@ -35,6 +35,7 @@
     modLabel,
     scoreMods,
     hitBreakdown,
+    scoreWebsiteLink,
     type Score,
     type Library,
     type Filters,
@@ -55,6 +56,7 @@
     restoreApiConnection,
     forgetApiConnection,
     openApiRegistration,
+    openScorePage,
     type ApiConnection,
     checkOnlineReplay,
     type OnlineReplayStatus,
@@ -547,6 +549,18 @@
     if (typeof folder !== 'string') return null;
     replayFolder = folder;
     return folder;
+  }
+  const selectedWebsite = $derived(selected ? scoreWebsiteLink(selected) : null);
+  async function visitScore(event: MouseEvent, score: Score) {
+    if (!isDesktop) return;
+    event.preventDefault();
+    const link = scoreWebsiteLink(score);
+    if (!link) return;
+    try {
+      await openScorePage(link);
+    } catch (e) {
+      exportFeedback = { id: score.id, text: String(e) };
+    }
   }
   async function downloadReplay(score: Score) {
     if (exporting) return;
@@ -1906,6 +1920,14 @@
       </div>
       <div class="detail-content">
         <div class="detail-pills">
+          {#if selectedWebsite}<a
+              class="button small"
+              href={selectedWebsite.url}
+              target="_blank"
+              rel="noreferrer"
+              onclick={(e) => selected && visitScore(e, selected)}
+              ><ArrowUpRight size={14} />View on osu!</a
+            >{/if}
           <button
             class="button small"
             disabled={!isDesktop || loadingSong}

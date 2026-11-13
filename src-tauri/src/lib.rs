@@ -4,6 +4,7 @@ pub mod calculators;
 pub mod downloads;
 pub mod lazer;
 pub mod library;
+pub mod links;
 pub mod maps;
 pub mod online_replays;
 pub mod osu_api;
@@ -177,6 +178,14 @@ mod desktop {
         let path = state.path.clone();
         tauri::async_runtime::spawn_blocking(move || {
             crate::sources::save(&library::db(&path)?, sources)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    async fn open_score_page(score_id: String, mode: u8, legacy: bool) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::links::open_score(&score_id, mode, legacy)
         })
         .await
         .map_err(|e| e.to_string())?
@@ -380,6 +389,7 @@ mod desktop {
                 artwork,
                 replay_availability,
                 open_osu_api_settings,
+                open_score_page,
                 connect_online_replays,
                 disconnect_online_replays,
                 restore_api_connection,

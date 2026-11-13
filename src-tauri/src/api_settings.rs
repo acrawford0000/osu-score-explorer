@@ -248,33 +248,6 @@ mod tests {
     }
 }
 
-/// Opens only the fixed osu! registration URL; no caller-supplied shell input.
-#[cfg(windows)]
 pub fn open_registration() -> Result<(), String> {
-    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
-    let url: Vec<u16> = "https://osu.ppy.sh/home/account/edit#new-oauth-application"
-        .encode_utf16()
-        .chain(Some(0))
-        .collect();
-    let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
-    // Both strings are NUL-terminated and alive for this synchronous call.
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            operation.as_ptr(),
-            url.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    if result as isize <= 32 {
-        Err("Could not open the osu! account page in your browser".into())
-    } else {
-        Ok(())
-    }
-}
-#[cfg(not(windows))]
-pub fn open_registration() -> Result<(), String> {
-    Err("Open https://osu.ppy.sh/home/account/edit#new-oauth-application in your browser".into())
+    crate::links::open_registration()
 }

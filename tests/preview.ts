@@ -3,7 +3,12 @@ import { demoScores } from '../src/lib/demo';
 import { defaultFilters } from '../src/lib/model';
 const reusedIdentity = new URLSearchParams(location.search).get('identity') === 'reused';
 const scores = Array.from({ length: 320 }, (_, batch) =>
-  demoScores().map((s) => ({ ...s, id: `${batch}:${s.id}`, hasArtwork: false })),
+  demoScores().map((s) => ({
+    ...s,
+    id: `${batch}:${s.id}`,
+    hasArtwork: false,
+    legacyOnlineId: '7',
+  })),
 )
   .flat()
   .map((s, i) =>
@@ -79,7 +84,7 @@ Object.assign(window, {
   __TAURI_INTERNALS__: {
     convertFileSrc: (path: string) => path,
     invoke: async (command: string, args: Record<string, unknown>) => {
-      if (command === 'open_osu_api_settings') return;
+      if (command === 'open_osu_api_settings' || command === 'open_score_page') return;
       if (command === 'restore_api_connection')
         return {
           connected: new URLSearchParams(location.search).has('savedApi'),

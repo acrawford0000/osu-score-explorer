@@ -64,6 +64,8 @@ fn server(
                     Err(e) => panic!("{e}"),
                 }
             };
+            // Accepted sockets can inherit the nonblocking listener on Windows.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

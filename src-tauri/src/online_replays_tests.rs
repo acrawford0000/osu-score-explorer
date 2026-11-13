@@ -471,3 +471,78 @@ fn mismatching_online_id_does_not_hide_a_valid_alternative() {
     assert_eq!(seen.lock().unwrap().len(), 3);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn reconstructed_standard_replay_omits_bonus_counters_but_keeps_play_identity() {
+    let (root, path, output, mut s) = fixture();
+    s.n_geki = 25;
+    s.n_katu = 3;
+    library::db(&path)
+        .unwrap()
+        .execute(
+            "UPDATE scores SET data=?1 WHERE id=?2",
+            params![serde_json::to_string(&s).unwrap(), s.id],
+        )
+        .unwrap();
+    let bytes = replays::tests::replay_bytes(&s, 20_151_228);
+    assert!(verify(&bytes, std::slice::from_ref(&s)).is_ok());
+    for field in ["combo", "judgment", "score", "map", "date"] {
+        let mut wrong = s.clone();
+        match field {
+            "combo" => wrong.combo += 1,
+            "judgment" => wrong.n100 += 1,
+            "score" => wrong.raw_score += 1,
+            "map" => wrong.map_hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            _ => wrong.date = "2017-01-02T00:00:00Z".into(),
+        }
+        assert!(verify(&bytes, &[wrong]).is_err(), "{field}");
+    }
+    let (service, _, worker) = server(vec![
+        auth(),
+        (
+            "/api/v2/scores/osu/7/download".into(),
+            200,
+            String::new(),
+            bytes.clone(),
+        ),
+    ]);
+    connect(&service);
+    let file = service.export(&path, &s.id, &output).unwrap();
+    assert_eq!(file.parent().unwrap(), output.canonicalize().unwrap());
+    assert_eq!(fs::read(&file).unwrap(), bytes);
+    assert!(
+        saved_bytes(
+            &library::db(&path).unwrap(),
+            &s.id,
+            std::slice::from_ref(&s)
+        )
+        .unwrap()
+        .is_some()
+    );
+    worker.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn catch_and_mania_meaningful_auxiliary_judgments_still_must_match() {
+    for mode in [2_u8, 3] {
+        let mut s = replays::tests::score("stable");
+        s.mode = mode;
+        let base = replays::tests::replay_bytes(&s, 20_151_228);
+        let mut replay = osu_db::Replay::from_bytes(&base).unwrap();
+        replay.mode = if mode == 2 {
+            osu_db::Mode::CatchTheBeat
+        } else {
+            osu_db::Mode::Mania
+        };
+        let mut bytes = Vec::new();
+        replay.to_writer(&mut bytes, None).unwrap();
+        assert!(verify(&bytes, std::slice::from_ref(&s)).is_ok());
+        s.n_katu = 1;
+        assert!(verify(&bytes, std::slice::from_ref(&s)).is_err());
+        if mode == 3 {
+            s.n_katu = 0;
+            s.n_geki = 1;
+            assert!(verify(&bytes, &[s]).is_err());
+        }
+    }
+}

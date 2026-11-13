@@ -1,5 +1,7 @@
 export type Score = {
   playerId?: number;
+  legacyOnlineId?: string | null;
+  soloOnlineId?: string | null;
   calculationVersion?: string;
   id: string;
   mapHash: string;
@@ -313,5 +315,27 @@ export function strongIdentity(s: Identity): string | null {
     return `legacy:${s.ruleset}:${s.mapHash}:${s.legacyId}`;
   if (s.onlineId && /^[1-9]\d*$/.test(s.onlineId))
     return `solo:${s.ruleset}:${s.mapHash}:${s.onlineId}`;
+  return null;
+}
+
+export function scoreWebsiteLink(s: Score) {
+  const valid = (id?: string | null): id is string =>
+    !!id && /^[1-9][0-9]*$/.test(id) && BigInt(id) < 9223372036854775807n;
+  const modes = ['osu', 'taiko', 'fruits', 'mania'];
+  if (!modes[s.mode]) return null;
+  if (valid(s.soloOnlineId))
+    return {
+      url: `https://osu.ppy.sh/scores/${s.soloOnlineId}`,
+      scoreId: s.soloOnlineId,
+      mode: s.mode,
+      legacy: false,
+    };
+  if (valid(s.legacyOnlineId))
+    return {
+      url: `https://osu.ppy.sh/scores/${modes[s.mode]}/${s.legacyOnlineId}`,
+      scoreId: s.legacyOnlineId,
+      mode: s.mode,
+      legacy: true,
+    };
   return null;
 }

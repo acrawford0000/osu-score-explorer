@@ -6,6 +6,7 @@ import {
   strongIdentity,
   modLabel,
   hitBreakdown,
+  scoreWebsiteLink,
   clampPage,
 } from '../src/lib/model';
 import { demoScores } from '../src/lib/demo';
@@ -270,4 +271,24 @@ describe('cross-client identity groundwork', () => {
       strongIdentity({ origin: 'lazer', ruleset: 0, mapHash: 'abc', legacyId: '123' }),
     ).not.toBe(strongIdentity({ origin: 'lazer', ruleset: 1, mapHash: 'abc', legacyId: '123' }));
   });
+});
+
+it('links online scores with the correct unified or legacy ruleset namespace', () => {
+  for (const [mode, name] of ['osu', 'taiko', 'fruits', 'mania'].entries()) {
+    expect(scoreWebsiteLink({ ...base, mode, legacyOnlineId: '7' })?.url).toBe(
+      `https://osu.ppy.sh/scores/${name}/7`,
+    );
+  }
+  expect(scoreWebsiteLink({ ...base, legacyOnlineId: '7', soloOnlineId: '900' })?.url).toBe(
+    'https://osu.ppy.sh/scores/900',
+  );
+  for (const legacyOnlineId of [
+    null,
+    '',
+    '0',
+    '../7',
+    'https://example.com',
+    '9223372036854775807',
+  ])
+    expect(scoreWebsiteLink({ ...base, legacyOnlineId })).toBeNull();
 });

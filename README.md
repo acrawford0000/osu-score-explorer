@@ -44,6 +44,8 @@ Download up to three sets at once. The app automatically tries other mirrors whe
 
 Use your friend's `osu!.db` to identify maps, or configure osu! API lookup when you only have `scores.db`. Recovery follows your selected player. Older or edited map versions may be unavailable from mirrors; PP is calculated only when the exact version is found.
 
+Open an expanded score to visit its page on the osu! website when an online score ID is available.
+
 ## Find your next goal
 
 - **One miss chokes:** the plays that came close.
