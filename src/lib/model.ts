@@ -1,4 +1,6 @@
 export type Score = {
+  playerId?: number;
+  calculationVersion?: string;
   id: string;
   mapHash: string;
   player: string;
@@ -34,6 +36,8 @@ export type Score = {
   gameplayLazer?: boolean;
 };
 export type Library = {
+  playerAccounts?: PlayerAccount[];
+  calculator?: string;
   gameSources?: GameSource[];
   scores: Score[];
   warnings: string[];
@@ -53,6 +57,58 @@ export type Library = {
   lazerRoot?: string | null;
 };
 export type GameSource = { kind: 'stable' | 'lazer'; root: string; songs: string | null };
+export type PlayerAccount = { id: number; name: string; aliases: string[] };
+export function matchesPlayer(score: Score, filter: string): boolean {
+  if (filter.startsWith('id:')) return score.playerId === Number(filter.slice(3));
+  if (filter.startsWith('name:'))
+    return !score.playerId && score.player.trim().toLowerCase() === filter.slice(5);
+  const name = filter.trim().toLowerCase();
+  return [score.player, ...(score.playerAliases || [])].some(
+    (v) => v.trim().toLowerCase() === name,
+  );
+}
+export function playerChoices(
+  scores: Score[],
+  accounts: PlayerAccount[] = [],
+): { value: string; label: string; names: string[] }[] {
+  const known = new Map(accounts.map((a) => [a.id, a]));
+  const choices = new Map<
+    string,
+    { value: string; label: string; names: string[]; date: string }
+  >();
+  for (const s of scores) {
+    const account = s.playerId && s.playerId > 1 ? known.get(s.playerId) : undefined;
+    const key =
+      s.playerId && s.playerId > 1 ? `id:${s.playerId}` : `name:${s.player.trim().toLowerCase()}`;
+    let c = choices.get(key);
+    if (!c) {
+      c = { value: key, label: account?.name || s.player, names: [], date: s.date };
+      choices.set(key, c);
+    }
+    c.names.push(s.player, ...(s.playerAliases || []), ...(account?.aliases || []));
+    if (
+      !account &&
+      (s.date > c.date ||
+        (s.player.toLowerCase() === c.label.toLowerCase() && s.player === s.player.toLowerCase()))
+    ) {
+      c.label = s.player;
+      c.date = s.date;
+    }
+  }
+  const labels = new Map<string, number>();
+  for (const c of choices.values())
+    labels.set(c.label.toLowerCase(), (labels.get(c.label.toLowerCase()) || 0) + 1);
+  return [...choices.values()]
+    .map((c) => ({
+      ...c,
+      label:
+        labels.get(c.label.toLowerCase())! > 1
+          ? `${c.label} (${c.value.startsWith('id:') ? 'ID ' + c.value.slice(3) : 'unlinked'})`
+          : c.label,
+      names: [...new Set(c.names)],
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
 export function clampPage(page: number, total: number, size: number): number {
   return Math.max(0, Math.min(Math.max(0, Math.ceil(total / size) - 1), Math.trunc(page)));
 }
@@ -147,10 +203,7 @@ export function filterScores(scores: Score[], f: Filters): Score[] {
     if (f.mode !== '' && s.mode !== Number(f.mode)) return false;
     const haystack =
       `${s.artist} ${s.title} ${s.difficulty} ${s.mapper} ${s.mapHash}`.toLocaleLowerCase();
-    if (
-      !terms.every((t) => haystack.includes(t)) ||
-      (f.player && s.player !== f.player && !s.playerAliases?.includes(f.player))
-    )
+    if (!terms.every((t) => haystack.includes(t)) || (f.player && !matchesPlayer(s, f.player)))
       return false;
     if (f.minStars > 0 && (s.stars === null || s.stars < f.minStars)) return false;
     if (f.maxMisses !== null && s.misses > f.maxMisses) return false;

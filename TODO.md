@@ -34,11 +34,15 @@
 - [x] Resolve IDs from configured osu!.db catalogs first, then authenticated osu! API checksum lookup; cache resolved IDs.
 - [x] Keep a persistent download queue with pause/resume, retry/backoff, and one download per mapset.
 - [x] Refresh exact-hash score metadata, artwork, stars, PP, and FC PP after each installation, including retained lazer calculation inputs.
-- [ ] Add mirror selection and a manual retry action for unavailable historical revisions.
+- [x] Download three sets concurrently with automatic mirror failover and shared rate-limit cooldowns.
+- [ ] Add a manual retry action for unavailable historical revisions.
 - [ ] Watch for externally installed beatmaps and batch their changes into the same incremental recovery path.
 - [x] Provide compact sidebar playback, expanded seek/volume controls, and a draggable in-app player.
 
 ## Calculation speed and responsiveness
+
+- [x] Offer a default 2026 lazer-rules Rust calculator alongside preserved rosu-pp results, with background calculation progress and incremental score updates.
+- [x] Group players by verified account ID and unique case-insensitive username matches across stable/lazer; share identity filtering with progression.
 
 - [ ] Add bounded parallel workers for first-run map difficulty, stars, actual PP, and PP-if-FC calculations. Keep CPU capacity available for the interface and other applications.
 - [ ] Share difficulty results for identical map revisions, rulesets, mods, and custom rate settings so several plays do not repeat the same expensive work.

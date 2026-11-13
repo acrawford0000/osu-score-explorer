@@ -21,12 +21,47 @@ export const replayAvailability = (ids: string[]) =>
 export const exportReplay = (id: string, directory: string) =>
   invoke<string>('export_replay', { id, directory });
 
-export type DownloadOptions = { songs: string; player: string | null; clientId: string; clientSecret: string };
-export type DownloadStatus = {
-  running: boolean; phase: string; message: string; total: number; completed: number;
-  unavailable: number; pending: number; bytes: number; totalBytes: number | null;
-  installedSets: number; updates: import('./model').Score[]; issues: string[];
+export type DownloadOptions = {
+  songs: string;
+  player: string | null;
+  clientId: string;
+  clientSecret: string;
 };
-export const startDownloads = (options: DownloadOptions) => invoke<void>('start_downloads', { options });
+export type DownloadStatus = {
+  running: boolean;
+  phase: string;
+  message: string;
+  total: number;
+  completed: number;
+  unavailable: number;
+  pending: number;
+  bytes: number;
+  totalBytes: number | null;
+  installedSets: number;
+  updates: import('./model').Score[];
+  issues: string[];
+};
+export const startDownloads = (options: DownloadOptions) =>
+  invoke<void>('start_downloads', { options });
 export const downloadStatus = () => invoke<DownloadStatus>('download_status');
 export const pauseDownloads = () => invoke<void>('pause_downloads');
+export type CalculationStatus = {
+  running: boolean;
+  processed: number;
+  total: number;
+  calculated: number;
+  unavailable: number;
+  message: string;
+  updates: import('./model').Score[];
+};
+export const calculationStatus = () => invoke<CalculationStatus>('calculation_status');
+export const startCalculations = () => invoke<void>('start_calculations');
+export const selectCalculator = (calculator: string) =>
+  invoke<Library>('select_calculator', { calculator });
+export const savePlayerAccount = (account: import('./model').PlayerAccount) =>
+  invoke<Library>('save_player_account', { account });
+export const refreshPlayerIdentity = (id: number) =>
+  invoke<{ accounts: import('./model').PlayerAccount[]; assignments: [string, number | null][] }>(
+    'refresh_player_identity',
+    { id },
+  );

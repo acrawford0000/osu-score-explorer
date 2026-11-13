@@ -68,6 +68,8 @@ pub struct Score {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Library {
+    pub player_accounts: Vec<crate::players::Account>,
+    pub calculator: String,
     pub scores: Vec<Score>,
     pub warnings: Vec<String>,
     pub engine: String,
@@ -95,6 +97,7 @@ pub(crate) fn db(path: &Path) -> Result<Connection, String> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS score_artwork(id TEXT NOT NULL,source_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,source_key));").map_err(|e|e.to_string())?;
     crate::maps::schema(&c)?;
     crate::downloads::schema(&c)?;
+    crate::calculators::schema(&c)?;
     c.execute_batch(
         "CREATE INDEX IF NOT EXISTS scores_map_hash_lower ON scores(lower(json_extract(data,'$.mapHash')));",
     )
@@ -103,6 +106,10 @@ pub(crate) fn db(path: &Path) -> Result<Connection, String> {
         c.execute_batch("BEGIN; INSERT OR IGNORE INTO score_artwork SELECT id,'legacy:'||artwork,artwork FROM scores WHERE artwork IS NOT NULL; INSERT OR REPLACE INTO metadata VALUES('multi_artwork','1'); COMMIT;").map_err(|e|e.to_string())?;
     }
     Ok(c)
+}
+#[doc(hidden)]
+pub fn db_for_inspection(path: &Path) -> Result<Connection, String> {
+    db(path)
 }
 pub fn load(path: &Path) -> Result<Library, String> {
     let c = db(path)?;
@@ -141,6 +148,7 @@ pub fn load(path: &Path) -> Result<Library, String> {
         }
         scores.push(score);
     }
+    crate::calculators::project(&c, &mut scores)?;
     let stable_scores = scores.iter().filter(|s| s.source == "stable").count();
     let lazer_scores = scores.iter().filter(|s| s.source == "lazer").count();
     let native_lazer_scores = scores
@@ -211,13 +219,18 @@ pub fn load(path: &Path) -> Result<Library, String> {
             .ok()
             .flatten()
     };
+    let player_accounts = crate::players::resolve(&c, &mut scores);
     Ok(Library {
+        player_accounts,
         game_sources: crate::sources::list(&c)?,
         scores,
         warnings: get("warnings")
             .and_then(|x| serde_json::from_str(&x).ok())
             .unwrap_or_default(),
-        engine: if lazer_scores > 0 {
+        calculator: crate::calculators::selected(&c),
+        engine: if crate::calculators::selected(&c) == "lazer" {
+            "Lazer 2026 rules · Rust port ba174151".into()
+        } else if lazer_scores > 0 {
             "rosu-pp 4.0.1 · stable + lazer".into()
         } else {
             get("engine").unwrap_or_else(|| ENGINE.into())

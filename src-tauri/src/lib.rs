@@ -1,8 +1,11 @@
 pub mod audio;
+pub mod calculators;
 pub mod downloads;
 pub mod lazer;
 pub mod library;
 pub mod maps;
+pub mod player_profiles;
+pub mod players;
 pub mod recovery;
 pub mod replays;
 pub mod sources;
@@ -23,6 +26,7 @@ mod desktop {
         importing: Arc<AtomicBool>,
         replay_lock: Arc<Mutex<()>>,
         downloads: Arc<crate::downloads::Controller>,
+        calculators: Arc<crate::calculators::Controller>,
     }
     struct ImportGuard(Arc<AtomicBool>);
     impl Drop for ImportGuard {
@@ -31,6 +35,66 @@ mod desktop {
         }
     }
 
+    #[tauri::command]
+    async fn refresh_player_identity(
+        id: u64,
+        state: State<'_, Store>,
+    ) -> Result<crate::player_profiles::Identity, String> {
+        let path = state.path.clone();
+        tauri::async_runtime::spawn_blocking(move || crate::player_profiles::refresh(&path, id))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    async fn save_player_account(
+        account: crate::players::Account,
+        state: State<'_, Store>,
+    ) -> Result<Library, String> {
+        let path = state.path.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let c = library::db(&path)?;
+            crate::players::save(&c, account)?;
+            library::load(&path)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    fn calculation_status(state: State<'_, Store>) -> crate::calculators::Status {
+        state.calculators.status()
+    }
+    #[tauri::command]
+    fn start_calculations(state: State<'_, Store>) {
+        state.calculators.start(state.path.clone());
+    }
+    #[tauri::command]
+    async fn select_calculator(
+        calculator: String,
+        state: State<'_, Store>,
+    ) -> Result<Library, String> {
+        if calculator != "lazer" && calculator != "rosu" {
+            return Err("Unknown calculator".into());
+        }
+        let path = state.path.clone();
+        let selected = calculator.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let c = library::db(&path)?;
+            c.execute(
+                "INSERT OR REPLACE INTO metadata VALUES('calculator',?1)",
+                [selected],
+            )
+            .map_err(|e| e.to_string())?;
+            library::load(&path)
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if calculator == "lazer" {
+            state.calculators.start(state.path.clone());
+        } else {
+            state.calculators.stop();
+        }
+        result
+    }
     #[tauri::command]
     fn download_status(state: State<'_, Store>) -> crate::downloads::Status {
         state.downloads.status()
@@ -196,6 +260,12 @@ mod desktop {
             .setup(|app| {
                 let directory = app.path().app_local_data_dir()?;
                 std::fs::create_dir_all(&directory)?;
+                let c = library::db(&directory.join("library.sqlite"))?;
+                c.execute(
+                    "INSERT OR IGNORE INTO metadata VALUES('calculator','lazer')",
+                    [],
+                )?;
+                drop(c);
                 let downloads = Arc::new(crate::downloads::Controller::default());
                 downloads.restore(&directory.join("library.sqlite"));
                 app.manage(Store {
@@ -203,6 +273,7 @@ mod desktop {
                     importing: Arc::new(AtomicBool::new(false)),
                     replay_lock: Arc::new(Mutex::new(())),
                     downloads,
+                    calculators: Arc::new(crate::calculators::Controller::default()),
                 });
                 Ok(())
             })
@@ -217,7 +288,12 @@ mod desktop {
                 audio_track,
                 start_downloads,
                 download_status,
-                pause_downloads
+                pause_downloads,
+                calculation_status,
+                start_calculations,
+                select_calculator,
+                save_player_account,
+                refresh_player_identity
             ])
             .run(tauri::generate_context!())
             .expect("Could not start Score Explorer");

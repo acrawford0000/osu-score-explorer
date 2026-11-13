@@ -18,6 +18,20 @@
   font-synthesis: none;
   font-synthesis-weight: none;
 }
+:root[data-theme='osu-web'] {
+  color-scheme: dark;
+  --bg: #1c1719; --sidebar: #221c20; --panel: #2a2226;
+  --panel-hover: #362b31; --border: #49323d; --input: #231c20;
+  --text: #f5e9ef; --muted: #c6a9b8; --faint: #a88a9b;
+  --accent: #ff66aa; --accent-wash: #ff66aa19; --green: #88d9ae;
+}
+:root[data-theme='discord'] {
+  color-scheme: dark;
+  --bg: #313338; --sidebar: #1e1f22; --panel: #2b2d31;
+  --panel-hover: #383a40; --border: #45474f; --input: #232428;
+  --text: #f2f3f5; --muted: #b5bac1; --faint: #959ba6;
+  --accent: #8891ff; --accent-wash: #5865f225; --green: #74dba7;
+}
 * {
   box-sizing: border-box;
 }

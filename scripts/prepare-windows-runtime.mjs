@@ -50,6 +50,7 @@ await fs.cp(path.join(source, 'node_modules'), path.join(stage, 'node_modules'),
 await fs.writeFile(path.join(stage, 'NODE-LICENSE.txt'), nodeLicense);
 for (const name of ['LICENSE', 'THIRD_PARTY_NOTICES.md'])
   await fs.copyFile(path.join(root, name), path.join(stage, name));
+await fs.cp(path.join(root, 'licenses'), path.join(stage, 'licenses'), { recursive: true });
 // Exclude development Node installations and NODE_PATH from module resolution.
 const env = { ...process.env, NODE_PATH: '', NODE_OPTIONS: '' };
 execFileSync(

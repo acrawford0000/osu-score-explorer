@@ -6,4 +6,6 @@ export const themes = [
   { id: 'nord', name: 'Nord', colors: ['#242933', '#88c0d0', '#d8dee9'] },
   { id: 'catppuccin', name: 'Catppuccin', colors: ['#1e1e2e', '#cba6f7', '#cdd6f4'] },
   { id: 'paper', name: 'Paper', colors: ['#eeeeee', '#444444', '#444444'] },
+  { id: 'osu-web', name: 'osu! Web Dark', colors: ['#1c1719', '#ff66aa', '#f5e9ef'] },
+  { id: 'discord', name: 'Discord Dark', colors: ['#313338', '#8891ff', '#f2f3f5'] },
 ];

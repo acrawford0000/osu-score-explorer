@@ -1,4 +1,4 @@
-//! Persistent missing-map recovery. Network requests and calculations run in one worker.
+//! Persistent missing-map recovery with concurrent downloads and one installation writer.
 use crate::{
     library::{self, Score},
     sources,
@@ -6,9 +6,9 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -18,6 +18,8 @@ use std::{
 };
 
 const MAX_ARCHIVE: u64 = 300 * 1024 * 1024;
+#[cfg(test)]
+use std::{collections::HashMap, io::Write};
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Options {
@@ -70,8 +72,11 @@ impl Controller {
     pub fn status(&self) -> Status {
         let mut s = self.state.lock().unwrap();
         s.running = self.running.load(Ordering::Acquire);
-        let result = s.clone();
-        s.updates.clear();
+        let mut updates = std::mem::take(&mut s.updates);
+        let remaining = updates.split_off(updates.len().min(1000));
+        let mut result = s.clone();
+        result.updates = updates;
+        s.updates = remaining;
         result
     }
     fn change(&self, f: impl FnOnce(&mut Status)) {
@@ -176,7 +181,7 @@ fn prepare(
             .player
             .as_ref()
             .filter(|v| !v.is_empty())
-            .is_some_and(|p| s.player != *p && !s.player_aliases.contains(p))
+            .is_some_and(|p| !crate::players::matches(&s, p))
         {
             continue;
         }
@@ -267,6 +272,7 @@ struct Http {
     last_api: Option<Instant>,
     oauth: String,
     api: String,
+    #[cfg(test)]
     mirror: String,
 }
 impl Http {
@@ -285,6 +291,7 @@ impl Http {
             last_api: None,
             oauth: "https://osu.ppy.sh/oauth/token".into(),
             api: "https://osu.ppy.sh/api/v2/beatmaps/lookup".into(),
+            #[cfg(test)]
             mirror: "https://mirror.nekoha.moe/api/download".into(),
         })
     }
@@ -384,6 +391,7 @@ impl Http {
             .zip(v["beatmapset_id"].as_i64())
             .filter(|(a, b)| *a > 0 && *b > 0))
     }
+    #[cfg(test)]
     fn download(&self, id: i64, path: &Path, ctl: &Controller) -> Result<(), String> {
         let url = format!("{}/{id}?noVideo=1", self.mirror);
         let mut r = self.response(|| self.client.get(&url), ctl)?;
@@ -539,9 +547,9 @@ fn install(
     result
 }
 pub fn run(path: &Path, options: Options, ctl: Arc<Controller>) -> Result<(), String> {
-    let http = Http::new(&options)?;
-    run_http(path, options, ctl, http)
+    queue::run(path, options, ctl)
 }
+#[cfg(test)]
 fn run_http(
     path: &Path,
     options: Options,
@@ -755,6 +763,8 @@ pub fn finish(ctl: &Controller, result: Result<(), String>) {
     ctl.running.store(false, Ordering::Release);
 }
 
+#[path = "download_queue.rs"]
+mod queue;
 #[cfg(test)]
 #[path = "downloads_tests.rs"]
-mod tests;
+pub(crate) mod tests;

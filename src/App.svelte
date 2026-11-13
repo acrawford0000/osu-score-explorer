@@ -39,6 +39,7 @@
     type Filters,
     type GameSource,
     clampPage,
+    playerChoices,
   } from './lib/model';
   import { demoScores } from './lib/demo';
   import {
@@ -54,6 +55,12 @@
     downloadStatus,
     pauseDownloads,
     type DownloadStatus,
+    calculationStatus,
+    startCalculations,
+    selectCalculator,
+    type CalculationStatus,
+    savePlayerAccount,
+    refreshPlayerIdentity,
   } from './lib/backend';
   import { themes } from './lib/themes';
   import type { QueryResult } from './lib/query';
@@ -100,9 +107,22 @@
   let replayFolder = $state(read<string>('sx-replay-folder', ''));
   let automaticDownloads = $state(read<boolean>('sx-auto-downloads', false));
   let downloadSongs = $state(read<string>('sx-download-songs', ''));
-  let apiClientId = $state(''), apiClientSecret = $state('');
+  let apiClientId = $state(''),
+    apiClientSecret = $state('');
   let queue = $state.raw<DownloadStatus | null>(null);
-  const downloadFolders = $derived([...new Set(gameSources.filter((s) => s.kind === 'stable' && s.root).map((s) => s.songs || `${s.root.replace(/[\\/]+$/, '')}/Songs`))]);
+  let calculator = $state('lazer');
+  let calculationProgress = $state.raw<CalculationStatus | null>(null);
+  let selectingCalculator = $state(false);
+  let identityId = $state(''),
+    identityName = $state(''),
+    identityAliases = $state('');
+  const downloadFolders = $derived([
+    ...new Set(
+      gameSources
+        .filter((s) => s.kind === 'stable' && s.root)
+        .map((s) => s.songs || `${s.root.replace(/[\\/]+$/, '')}/Songs`),
+    ),
+  ]);
   $effect(() => {
     localStorage.setItem('sx-auto-downloads', JSON.stringify(automaticDownloads));
     localStorage.setItem('sx-download-songs', JSON.stringify(downloadSongs));
@@ -115,7 +135,12 @@
   let loadingSong = $state(false),
     songMessage = $state('');
   let songRequest = 0;
-  $effect(() => { void selected?.id; songRequest++; loadingSong = false; songMessage = ''; });
+  $effect(() => {
+    void selected?.id;
+    songRequest++;
+    loadingSong = false;
+    songMessage = '';
+  });
   let selected = $state<Score | null>(null),
     page = $state(0);
   let metric = $state<'stars' | 'pp' | 'accuracy'>(read('sx-metric', 'stars')),
@@ -143,28 +168,65 @@
     points: [],
   });
   let byId = $derived(new Map(scores.map((s) => [s.id, s])));
+  let patchedScores: Score[] | null = null;
+  function applyUpdates(updates: Score[]) {
+    if (sample || !updates.length) return;
+    const patches = new Map(updates.map((s) => [s.id, s]));
+    const changed: Score[] = [];
+    const next = scores.map((s) => {
+      const patch = patches.get(s.id);
+      if (!patch) return s;
+      const sameEngine =
+        !patch.calculationVersion ||
+        patch.calculationVersion.startsWith('lazer-2026') === (calculator === 'lazer');
+      const updated = !sameEngine
+        ? {
+            ...s,
+            title: patch.title,
+            artist: patch.artist,
+            difficulty: patch.difficulty,
+            mapper: patch.mapper,
+            hasArtwork: patch.hasArtwork,
+          }
+        : {
+            ...s,
+            ...patch,
+            sources: s.sources,
+            playerAliases: s.playerAliases,
+            playerId: s.playerId,
+          };
+      changed.push(updated);
+      return updated;
+    });
+    if (worker) {
+      patchedScores = next;
+      worker.postMessage({ type: 'patch', scores: changed });
+    }
+    scores = next;
+    if (selected && patches.has(selected.id))
+      selected = scores.find((s) => s.id === selected!.id) || selected;
+  }
   onMount(() => {
     if (!isDesktop) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
-        const status = await downloadStatus();
+        const [status, calculations] = await Promise.all([downloadStatus(), calculationStatus()]);
         if (!active) return;
         queue = status;
-        if (!sample && status.updates.length) {
-          const patches = new Map(status.updates.map((s) => [s.id, s]));
-          scores = scores.map((s) => {
-            const patch = patches.get(s.id);
-            return patch ? { ...s, ...patch, sources: s.sources, playerAliases: s.playerAliases } : s;
-          });
-          if (selected && patches.has(selected.id)) selected = scores.find((s) => s.id === selected!.id) || selected;
-        }
-      } catch { /* An older preview may not expose a queue yet. */ }
+        calculationProgress = calculations;
+        applyUpdates([...status.updates, ...(calculator === 'lazer' ? calculations.updates : [])]);
+      } catch {
+        /* An older preview may not expose a queue yet. */
+      }
       if (active) timer = setTimeout(poll, 700);
     }
     void poll();
-    return () => { active = false; clearTimeout(timer); };
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   });
   let visible = $derived(
     result.ids.flatMap((id) => {
@@ -213,6 +275,10 @@
     return () => background.terminate();
   });
   $effect(() => {
+    if (scores === patchedScores) {
+      patchedScores = null;
+      return;
+    }
     worker?.postMessage({ type: 'load', scores });
   });
   $effect(() => {
@@ -237,9 +303,55 @@
     );
     return () => clearTimeout(timer);
   });
-  let players = $derived(
-    [...new Set(scores.flatMap((s) => [s.player, ...(s.playerAliases || [])]))].sort(),
+  let players = $derived(playerChoices(scores, library?.playerAccounts));
+  const checkedAccounts = new Set<number>();
+  async function refreshIdentity(id: number, report = false) {
+    if (!isDesktop || sample || id <= 1) return;
+    checkedAccounts.add(id);
+    try {
+      const identity = await refreshPlayerIdentity(id);
+      if (sample) return;
+      const ids = new Map(identity.assignments);
+      const accounts = new Map(identity.accounts.map((a) => [a.id, a]));
+      const selectedId = filters.player.startsWith('id:') ? Number(filters.player.slice(3)) : 0;
+      const reassigned = new Set(
+        scores
+          .filter((s) => s.playerId === selectedId)
+          .map((s) => (ids.has(s.id) ? ids.get(s.id) : s.playerId)),
+      );
+      scores = scores.map((s) => {
+        const playerId = ids.has(s.id) ? (ids.get(s.id) ?? undefined) : s.playerId;
+        return {
+          ...s,
+          playerId,
+          playerAliases: playerId ? accounts.get(playerId)?.aliases || [s.player] : [s.player],
+        };
+      });
+      if (selectedId && !scores.some((s) => s.playerId === selectedId) && reassigned.size === 1) {
+        const replacement = [...reassigned][0];
+        if (replacement) filters.player = `id:${replacement}`;
+      }
+      if (library) library = { ...library, playerAccounts: identity.accounts };
+      if (report) message = 'Player names refreshed from osu! profiles.';
+    } catch (e) {
+      if (report) error = String(e);
+    }
+  }
+  $effect(() => {
+    const id = filters.player.startsWith('id:') ? Number(filters.player.slice(3)) : 0;
+    if (!busy && id > 1 && !checkedAccounts.has(id)) void refreshIdentity(id);
+  });
+  let selectedPlayerLabel = $derived(
+    players.find((p) => p.value === filters.player)?.label || filters.player,
   );
+  $effect(() => {
+    if (filters.player && !players.some((p) => p.value === filters.player)) {
+      const matching = players.filter((p) =>
+        p.names.some((n) => n.toLowerCase() === filters.player.toLowerCase()),
+      );
+      if (matching.length === 1) filters.player = matching[0].value;
+    }
+  });
   let mods = $derived([...new Set(scores.map((s) => scoreMods(s)))].sort());
   let currentPreset = $derived(presets.find((p) => p.id === filters.preset) || presets[0]);
   let trendPoints = $derived(result.points);
@@ -278,8 +390,19 @@
       try {
         library = await loadLibrary();
         scores = library.scores;
+        calculator = library.calculator || 'rosu';
+        if (calculator === 'lazer')
+          void startCalculations().catch((e) => {
+            error = String(e);
+          });
         if (library.gameSources) gameSources = library.gameSources;
         defaultPlayer();
+        const own = library.playerAccounts?.find((a) =>
+          [a.name, ...a.aliases].some(
+            (n) => n.toLowerCase() === library?.defaultPlayer?.toLowerCase(),
+          ),
+        );
+        if (own && !checkedAccounts.has(own.id)) void refreshIdentity(own.id);
       } catch (e) {
         error = String(e);
       } finally {
@@ -313,7 +436,11 @@
     loadingSong = true;
     songMessage = '';
     try {
-      const url = await withTimeout(audioTrack(score.id), 8000, 'Audio lookup took too long. Try another score or rescan your libraries.');
+      const url = await withTimeout(
+        audioTrack(score.id),
+        8000,
+        'Audio lookup took too long. Try another score or rescan your libraries.',
+      );
       if (request !== songRequest) return;
       if (!url) {
         songMessage = 'No installed audio found for this map. Rescan after adding its beatmap.';
@@ -358,22 +485,86 @@
       exporting = '';
     }
   }
+  async function changeCalculator(value: string) {
+    selectingCalculator = true;
+    try {
+      library = await selectCalculator(value);
+      calculator = library.calculator || value;
+      scores = library.scores;
+    } catch (e) {
+      error = String(e);
+    } finally {
+      selectingCalculator = false;
+    }
+  }
+  async function linkPlayerNames() {
+    try {
+      library = await savePlayerAccount({
+        id: Number(identityId),
+        name: identityName,
+        aliases: identityAliases
+          .split(/[,\n]/)
+          .map((v) => v.trim())
+          .filter(Boolean),
+      });
+      scores = library.scores;
+      filters.player = `id:${Number(identityId)}`;
+      message =
+        'Player names linked. Score exploration and progression now include this account’s history.';
+      error = '';
+    } catch (e) {
+      error = String(e);
+    }
+  }
   async function chooseDownloadSongs() {
     if (!isDesktop) return;
     const { open } = await import('@tauri-apps/plugin-dialog');
-    const folder = await open({ directory: true, multiple: false, title: 'Choose a stable Songs folder for downloaded beatmaps' });
+    const folder = await open({
+      directory: true,
+      multiple: false,
+      title: 'Choose a stable Songs folder for downloaded beatmaps',
+    });
     if (typeof folder === 'string') downloadSongs = folder;
   }
   async function beginDownloads() {
     try {
-      if (!downloadSongs.trim()) { error = 'Choose a Songs folder for downloaded beatmaps first.'; importing = true; return; }
-      await startDownloads({ songs: downloadSongs, player: filters.player || null, clientId: apiClientId.trim(), clientSecret: apiClientSecret.trim() });
-      queue = { running: true, phase: 'preparing', message: 'Preparing missing beatmap downloads…', total: 0, completed: 0, unavailable: 0, pending: 0, bytes: 0, totalBytes: null, installedSets: 0, updates: [], issues: [] };
-      importing = false; error = '';
-    } catch (e) { error = String(e); }
+      if (!downloadSongs.trim()) {
+        error = 'Choose a Songs folder for downloaded beatmaps first.';
+        importing = true;
+        return;
+      }
+      await startDownloads({
+        songs: downloadSongs,
+        player: filters.player || null,
+        clientId: apiClientId.trim(),
+        clientSecret: apiClientSecret.trim(),
+      });
+      queue = {
+        running: true,
+        phase: 'preparing',
+        message: 'Preparing missing beatmap downloads…',
+        total: 0,
+        completed: 0,
+        unavailable: 0,
+        pending: 0,
+        bytes: 0,
+        totalBytes: null,
+        installedSets: 0,
+        updates: [],
+        issues: [],
+      };
+      importing = false;
+      error = '';
+    } catch (e) {
+      error = String(e);
+    }
   }
   async function pauseQueue() {
-    try { await pauseDownloads(); } catch (e) { error = String(e); }
+    try {
+      await pauseDownloads();
+    } catch (e) {
+      error = String(e);
+    }
   }
   function addSource(kind: 'stable' | 'lazer') {
     gameSources.push({ kind, root: '', songs: null });
@@ -412,7 +603,10 @@
     }
   }
   async function scan(force = false, target: 'both' | 'stable' | 'lazer' = 'both') {
-    if (queue?.running) { error = 'Pause beatmap downloads before starting another import.'; return; }
+    if (queue?.running) {
+      error = 'Pause beatmap downloads before starting another import.';
+      return;
+    }
     busy = true;
     error = '';
     importing = false;
@@ -451,6 +645,10 @@
     } else message = '';
     error = problems.join(' ');
     busy = false;
+    if (latest && calculator === 'lazer')
+      void startCalculations().catch((e) => {
+        error = String(e);
+      });
     if (latest && automaticDownloads) await beginDownloads();
   }
   function preset(id: string) {
@@ -553,7 +751,18 @@
             onclick={() => (message = '')}><X size={14} /></button
           >
         </div>{/if}
-      {#if queue?.running}<div class="notice download-notice" role="status"><Download size={16}/><span>{queue.message}</span><button class="button small" onclick={pauseQueue}>Pause downloads</button></div>{/if}
+      {#if queue?.running}<div class="notice download-notice" role="status">
+          <Download size={16} /><span>{queue.message}</span><button
+            class="button small"
+            onclick={pauseQueue}>Pause downloads</button
+          >
+        </div>{/if}
+      {#if calculationProgress?.running && calculator === 'lazer'}<div class="notice" role="status">
+          <RefreshCw size={16} /><span
+            >Updating lazer PP · {calculationProgress.processed.toLocaleString()} / {calculationProgress.total.toLocaleString()}
+            scores</span
+          >
+        </div>{/if}
       {#if section === 'explore'}
         <div class="page-heading">
           <div>
@@ -599,7 +808,8 @@
             aria-label="Player"
             bind:value={filters.player}
             onchange={() => localStorage.setItem('sx-player-selected', 'yes')}
-            ><option value="">All players</option>{#each players as player}<option>{player}</option
+            ><option value="">All players</option>{#each players as player}<option
+                value={player.value}>{player.label}</option
               >{/each}</select
           ><select class="mode-filter" aria-label="Gamemode" bind:value={filters.mode}
             ><option value="0">osu!standard</option><option value="1">osu!taiko</option><option
@@ -902,7 +1112,7 @@
               bind:value={filters.player}
               onchange={() => localStorage.setItem('sx-player-selected', 'yes')}
               ><option value="">Choose one player</option>{#each players as player}<option
-                  >{player}</option
+                  value={player.value}>{player.label}</option
                 >{/each}</select
             ></label
           >
@@ -1022,7 +1232,20 @@
               <button class="text-button" onclick={() => (replayFolder = '')}>Clear default</button>
             </div>
             {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
-            <DownloadPanel bind:automatic={automaticDownloads} bind:songs={downloadSongs} bind:clientId={apiClientId} bind:clientSecret={apiClientSecret} folders={downloadFolders} player={filters.player} status={queue} disabled={busy || sample} desktop={isDesktop} choose={chooseDownloadSongs} start={beginDownloads} pause={pauseQueue}/>
+            <DownloadPanel
+              bind:automatic={automaticDownloads}
+              bind:songs={downloadSongs}
+              bind:clientId={apiClientId}
+              bind:clientSecret={apiClientSecret}
+              folders={downloadFolders}
+              player={selectedPlayerLabel}
+              status={queue}
+              disabled={busy || sample}
+              desktop={isDesktop}
+              choose={chooseDownloadSongs}
+              start={beginDownloads}
+              pause={pauseQueue}
+            />
             <div class="setting-actions">
               <button class="button" disabled={busy || !isDesktop} onclick={() => scan()}
                 ><RefreshCw size={16} />Rescan all folders</button
@@ -1034,26 +1257,6 @@
                 >Recheck all map files</button
               >
             </div>
-          </section>
-          <section class="settings-panel">
-            <Database size={22} />
-            <h2>Calculation cache</h2>
-            <p>
-              PP and star results persist in an app-owned SQLite database. Opening the app loads
-              these results without rescanning.
-            </p>
-            <dl>
-              <dt>Engine</dt>
-              <dd>{library?.engine || 'rosu-pp 4.0.1'}</dd>
-              <dt>Last import</dt>
-              <dd>
-                {library?.importedAt
-                  ? new Date(library.importedAt).toLocaleString()
-                  : 'Not imported'}
-              </dd>
-              <dt>Artwork policy</dt>
-              <dd>Read from Songs or lazer’s file store. No copied backgrounds.</dd>
-            </dl>
           </section>
           <section class="settings-panel">
             <Sun size={22} />
@@ -1088,8 +1291,103 @@
             >
           </section>
           <section class="settings-panel">
+            <Database size={22} />
+            <h2>Calculation cache</h2>
+            <label class="form-label"
+              >PP calculator
+              <select
+                aria-label="PP calculator"
+                value={calculator}
+                disabled={!isDesktop || selectingCalculator}
+                onchange={(e) => changeCalculator(e.currentTarget.value)}
+              >
+                <option value="lazer">Lazer 2026 rules · Rust port (default)</option>
+                <option value="rosu">rosu-pp 4.0.1 · previous rules</option>
+              </select>
+            </label>
+            <p>
+              Each calculator keeps its own results. Switching preserves your saved rosu PP. Missing
+              lazer results are calculated in the background from exact installed maps.
+            </p>
+            {#if calculationProgress?.message && calculator === 'lazer'}<p
+                class="muted"
+                role="status"
+              >
+                {calculationProgress.message}
+              </p>{/if}
+            <dl>
+              <dt>Engine</dt>
+              <dd>{library?.engine || 'rosu-pp 4.0.1'}</dd>
+              <dt>Last import</dt>
+              <dd>
+                {library?.importedAt
+                  ? new Date(library.importedAt).toLocaleString()
+                  : 'Not imported'}
+              </dd>
+              <dt>Artwork policy</dt>
+              <dd>Read from Songs or lazer’s file store. No copied backgrounds.</dd>
+            </dl>
+          </section>
+          <section class="settings-panel">
             <Info size={22} />
             <h2>Combined library</h2>
+            <details class="account-links">
+              <summary>Player names & account IDs</summary>
+              <p>
+                Names are matched without regard to capitalization. Public profile history helps
+                identify former names and reused usernames. Ambiguous scores stay separate. Original
+                score names stay intact.
+              </p>
+              {#if library?.playerAccounts?.length}<label class="form-label"
+                  >Known accounts<select
+                    aria-label="Known player accounts"
+                    onchange={(e) => {
+                      const a = library?.playerAccounts?.find(
+                        (a) => String(a.id) === e.currentTarget.value,
+                      );
+                      if (a) {
+                        identityId = String(a.id);
+                        identityName = a.name;
+                        identityAliases = a.aliases.join(', ');
+                      }
+                    }}
+                    ><option value="">Choose an account…</option
+                    >{#each library.playerAccounts as account}<option value={account.id}
+                        >{account.name} · {account.id}</option
+                      >{/each}</select
+                  ></label
+                >{/if}
+              <label class="form-label"
+                >Account ID<input
+                  aria-label="Player account ID"
+                  inputmode="numeric"
+                  bind:value={identityId}
+                /></label
+              >
+              <label class="form-label"
+                >Display name<input
+                  aria-label="Player account display name"
+                  bind:value={identityName}
+                /></label
+              >
+              <label class="form-label"
+                >Historical names, separated by commas<input
+                  aria-label="Historical player names"
+                  bind:value={identityAliases}
+                /></label
+              >
+              <button
+                class="button"
+                disabled={!isDesktop || !identityId || !identityName.trim()}
+                onclick={linkPlayerNames}>Link player names</button
+              >
+              <button
+                class="button"
+                disabled={!isDesktop || !identityId}
+                onclick={() => refreshIdentity(Number(identityId), true)}
+                >Refresh names from osu!</button
+              >
+            </details>
             <dl>
               <dt>Stable records</dt>
               <dd>{number(library?.stableScores ?? 0)}</dd>
@@ -1206,7 +1504,20 @@
               </div></label
             >{/if}
         </div>{/each}
-      <DownloadPanel bind:automatic={automaticDownloads} bind:songs={downloadSongs} bind:clientId={apiClientId} bind:clientSecret={apiClientSecret} folders={downloadFolders} player={filters.player} status={queue} disabled={busy || sample} desktop={isDesktop} choose={chooseDownloadSongs} start={beginDownloads} pause={pauseQueue}/>
+      <DownloadPanel
+        bind:automatic={automaticDownloads}
+        bind:songs={downloadSongs}
+        bind:clientId={apiClientId}
+        bind:clientSecret={apiClientSecret}
+        folders={downloadFolders}
+        player={selectedPlayerLabel}
+        status={queue}
+        disabled={busy || sample}
+        desktop={isDesktop}
+        choose={chooseDownloadSongs}
+        start={beginDownloads}
+        pause={pauseQueue}
+      />
       <div class="setting-actions">
         <button class="button" onclick={() => addSource('stable')}>Add stable folder</button><button
           class="button"

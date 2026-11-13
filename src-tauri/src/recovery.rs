@@ -50,6 +50,8 @@ pub fn installed(
                 .map_err(|e| e.to_string())?
         };
         let map = rosu_pp::Beatmap::from_bytes(&bytes).ok();
+        let mut lazer_map = crate::calculators::Map::new(&bytes).ok();
+        let using_lazer = crate::calculators::selected(&tx) == "lazer";
         let image = meta
             .background
             .as_ref()
@@ -127,6 +129,14 @@ pub fn installed(
                 params![score.id, serde_json::to_string(&score).unwrap(), image],
             )
             .map_err(|e| e.to_string())?;
+            if let Some(map) = &mut lazer_map {
+                let cached = crate::calculators::cache(&tx, &score, map)?;
+                if using_lazer {
+                    crate::calculators::apply(&mut score, Some(&cached));
+                }
+            } else if using_lazer {
+                crate::calculators::apply(&mut score, None);
+            }
             updates.push(score);
         }
     }

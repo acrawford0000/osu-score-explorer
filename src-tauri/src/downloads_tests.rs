@@ -1,7 +1,7 @@
 use super::*;
 use std::{io::Cursor, net::TcpListener};
 
-fn fixture(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+pub(crate) fn fixture(label: &str) -> (PathBuf, PathBuf, PathBuf) {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -12,7 +12,7 @@ fn fixture(label: &str) -> (PathBuf, PathBuf, PathBuf) {
     let cache = root.join("library.sqlite");
     (root, songs, cache)
 }
-fn map(title: &str) -> Vec<u8> {
+pub(crate) fn map(title: &str) -> Vec<u8> {
     format!("osu file format v14\n[General]\nAudioFilename: audio.mp3\nMode:0\n[Metadata]\nTitle:{title}\nArtist:Artist\nCreator:Mapper\nVersion:Hard\nBeatmapID:10\nBeatmapSetID:5\n[Difficulty]\nHPDrainRate:5\nCircleSize:4\nOverallDifficulty:5\nApproachRate:5\nSliderMultiplier:1.4\nSliderTickRate:1\n[Events]\n0,0,\"bg.jpg\",0,0\nVideo,0,\"video.mp4\"\n[TimingPoints]\n0,500,4,2,0,100,1,0\n[HitObjects]\n256,192,1000,1,0,0:0:0:0:\n256,192,1500,1,0,0:0:0:0:\n").into_bytes()
 }
 fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
@@ -24,7 +24,7 @@ fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     }
     out.finish().unwrap().into_inner()
 }
-fn score(c: &Connection, id: &str, hash: &str, player: &str) {
+pub(crate) fn score(c: &Connection, id: &str, hash: &str, player: &str) {
     let s:Score=serde_json::from_value(serde_json::json!({"id":id,"mapHash":hash,"player":player,"date":"2020-01-01T00:00:00Z","mode":0,"title":"Unmatched beatmap","artist":"","difficulty":"","mapper":"","mods":0,"n300":1,"n100":0,"n50":0,"misses":1,"combo":1,"maxCombo":null,"rawScore":200,"accuracy":50.0,"fc":false,"ss":false,"stars":null,"pp":null,"fcPp":null,"source":"stable","status":"Map missing","hasArtwork":false})).unwrap();
     c.execute(
         "INSERT INTO scores VALUES(?1,?2,NULL)",
@@ -407,5 +407,114 @@ fn live_mirror_download_and_extraction() {
         "Live mirror returned {} readable maps, installed without video",
         files.len()
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn provided_downloader_switches_mirrors_after_not_found_and_rate_limit() {
+    for status in [404, 429] {
+        let (root, songs, path) = fixture(&format!("failover-{status}"));
+        let c = library::db(&path).unwrap();
+        let bytes = map("Recovered through fallback");
+        let hash = format!("{:x}", md5::compute(&bytes));
+        score(&c, "fallback", &hash, "Friend");
+        c.execute("INSERT INTO map_ids VALUES(?1,10,5,'catalog')", [hash])
+            .unwrap();
+        let (bad, bad_requests, bad_worker) = server(vec![(status, "Retry-After: 60\r\n", vec![])]);
+        let (good, good_requests, good_worker) = server(vec![(
+            200,
+            "Content-Type: application/octet-stream\r\n",
+            archive(&[("map.osu", &bytes)]),
+        )]);
+        let mirrors = vec![
+            osu_downloader::Mirror::custom(format!(
+                "{}/{{id}}?noVideo=1",
+                bad.replace("127.0.0.1", "localhost")
+            ))
+            .unwrap(),
+            osu_downloader::Mirror::custom(format!("{good}/{{id}}?noVideo=1")).unwrap(),
+        ];
+        let ctl = Arc::new(Controller::default());
+        super::queue::run_with(&path, options(&songs), ctl.clone(), mirrors).unwrap();
+        bad_worker.join().unwrap();
+        good_worker.join().unwrap();
+        assert_eq!(bad_requests.lock().unwrap().len(), 1);
+        assert_eq!(good_requests.lock().unwrap().len(), 1);
+        assert_eq!(ctl.status().completed, 1);
+        assert!(library::load(&path).unwrap().scores[0].pp.is_some());
+        drop(c);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn provided_downloader_runs_three_downloads_concurrently_with_one_score_writer() {
+    use std::sync::atomic::AtomicUsize;
+    let (root, songs, path) = fixture("concurrent");
+    let c = library::db(&path).unwrap();
+    let mut bodies = HashMap::new();
+    for id in [5, 6, 7] {
+        let bytes = map(&format!("Song {id}"));
+        let hash = format!("{:x}", md5::compute(&bytes));
+        score(&c, &format!("score-{id}"), &hash, "Friend");
+        c.execute(
+            "INSERT INTO map_ids VALUES(?1,10,?2,'catalog')",
+            params![hash, id],
+        )
+        .unwrap();
+        bodies.insert(id, archive(&[("map.osu", &bytes)]));
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let active = Arc::new(AtomicUsize::new(0));
+    let peak = Arc::new(AtomicUsize::new(0));
+    let observed = peak.clone();
+    let network = std::thread::spawn(move || {
+        let mut children = Vec::new();
+        let limit = Instant::now() + Duration::from_secs(15);
+        for _ in 0..3 {
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((s, _)) => break s,
+                    Err(_) => {
+                        assert!(Instant::now() < limit, "Missing concurrent request");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            };
+            let active = active.clone();
+            let peak = peak.clone();
+            let bodies = bodies.clone();
+            children.push(std::thread::spawn(move||{
+                socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();let mut request=Vec::new();let mut buf=[0;4096];while !request.windows(4).any(|w|w==b"\r\n\r\n"){let n=socket.read(&mut buf).unwrap();if n==0{break;}request.extend_from_slice(&buf[..n]);}
+                let text=String::from_utf8_lossy(&request);let url=text.split_whitespace().nth(1).unwrap();let id=url.trim_start_matches('/').split('?').next().unwrap().parse::<i32>().unwrap();
+                let n=active.fetch_add(1,Ordering::AcqRel)+1;peak.fetch_max(n,Ordering::AcqRel);std::thread::sleep(Duration::from_secs(1));let body=&bodies[&id];write!(socket,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Disposition: attachment; filename=\"{id}.osz\"\r\nConnection: close\r\n\r\n",body.len()).unwrap();socket.write_all(body).unwrap();active.fetch_sub(1,Ordering::AcqRel);
+            }));
+        }
+        for c in children {
+            c.join().unwrap();
+        }
+    });
+    let mirrors = vec![osu_downloader::Mirror::custom(format!("{base}/{{id}}?noVideo=1")).unwrap()];
+    let ctl = Arc::new(Controller::default());
+    super::queue::run_with(&path, options(&songs), ctl.clone(), mirrors).unwrap();
+    network.join().unwrap();
+    assert!(
+        observed.load(Ordering::Acquire) >= 2,
+        "Requests should overlap"
+    );
+    assert!(observed.load(Ordering::Acquire) <= 3);
+    assert_eq!(ctl.status().completed, 3);
+    assert_eq!(
+        library::load(&path)
+            .unwrap()
+            .scores
+            .iter()
+            .filter(|s| s.pp.is_some())
+            .count(),
+        3
+    );
+    drop(c);
     fs::remove_dir_all(root).unwrap();
 }
