@@ -233,6 +233,67 @@ fn perf(
     }
     p.calculate().pp()
 }
+pub(crate) fn recover(
+    c: &rusqlite::Connection,
+    score: &mut Score,
+    map: &rosu_pp::Beatmap,
+) -> Result<(), String> {
+    let input = crate::sources::value(c, &format!("lazer-input:{}", score.id))
+        .and_then(|v| serde_json::from_str::<Value>(&v).ok());
+    let Some(input) = input.filter(|v| v.as_array().is_some_and(|a| a.len() >= 11)) else {
+        score.status = "Rescan lazer to recover the original calculation inputs".into();
+        return Ok(());
+    };
+    let row: Row=serde_json::from_value(serde_json::json!({
+        "id":score.id,"legacy":input[9],"legacyId":null,"onlineId":null,"playerId":score.player_id,
+        "player":score.player,"date":score.date,"mode":score.mode,"mapHash":score.map_hash,
+        "mapSha":input[7],"mapPath":null,"artwork":null,"title":score.title,"artist":score.artist,
+        "difficulty":score.difficulty,"mapper":score.mapper,"stats":input[3],"maximum":input[4],
+        "mods":input[5],"combo":score.combo,"rawScore":score.raw_score,"legacyScore":input[10],"accuracy":score.accuracy.unwrap_or(0.0)
+    })).map_err(|_|"Cached lazer inputs could not be read")?;
+    if score.mods & (128 | 2048 | 8192) != 0 {
+        score.status = "Unranked automation mod; PP unavailable".into();
+        return Ok(());
+    }
+    let mods = match parsed_mods(&row) {
+        Ok(m) => m,
+        Err(e) => {
+            score.status = e;
+            return Ok(());
+        }
+    };
+    let Some(a) = attrs(map, &row, mods.clone()) else {
+        score.status = "Map calculation or conversion unavailable".into();
+        return Ok(());
+    };
+    score.max_combo = Some(a.max_combo());
+    score.stars = Some(a.stars());
+    if !library::complete(&a, score) {
+        score.status = "Incomplete play or judgments do not match the map".into();
+        return Ok(());
+    }
+    let actual = perf(a.clone(), score, &row, mods.clone(), false);
+    let mut fc = score.clone();
+    fc.misses = 0;
+    fc.combo = a.max_combo();
+    match &a {
+        rosu_pp::any::DifficultyAttributes::Catch(attrs) => {
+            fc.n300 = attrs.n_fruits;
+            fc.n100 = attrs.n_droplets;
+        }
+        rosu_pp::any::DifficultyAttributes::Mania(_) => fc.n_geki += score.misses,
+        _ => fc.n300 += score.misses,
+    }
+    let estimate = perf(a.clone(), &fc, &row, mods, true);
+    if actual.is_finite() && estimate.is_finite() && a.stars().is_finite() {
+        score.pp = Some(actual);
+        score.fc_pp = Some(estimate);
+        score.fc = score.misses == 0 && score.combo == a.max_combo();
+        score.calculation_version = ENGINE.into();
+        score.status = "Ready".into();
+    }
+    Ok(())
+}
 pub fn import(path: &Path, root: &Path, force: bool) -> Result<Library, String> {
     let started = std::time::Instant::now();
     let source = root.join("client.realm");

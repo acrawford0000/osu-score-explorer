@@ -20,3 +20,13 @@ export const replayAvailability = (ids: string[]) =>
   );
 export const exportReplay = (id: string, directory: string) =>
   invoke<string>('export_replay', { id, directory });
+
+export type DownloadOptions = { songs: string; player: string | null; clientId: string; clientSecret: string };
+export type DownloadStatus = {
+  running: boolean; phase: string; message: string; total: number; completed: number;
+  unavailable: number; pending: number; bytes: number; totalBytes: number | null;
+  installedSets: number; updates: import('./model').Score[]; issues: string[];
+};
+export const startDownloads = (options: DownloadOptions) => invoke<void>('start_downloads', { options });
+export const downloadStatus = () => invoke<DownloadStatus>('download_status');
+export const pauseDownloads = () => invoke<void>('pause_downloads');

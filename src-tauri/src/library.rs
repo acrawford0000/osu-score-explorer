@@ -94,6 +94,11 @@ pub(crate) fn db(path: &Path) -> Result<Connection, String> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS score_links(alias_id TEXT PRIMARY KEY,canonical_id TEXT NOT NULL); CREATE INDEX IF NOT EXISTS links_canonical ON score_links(canonical_id);").map_err(|e|e.to_string())?;
     c.execute_batch("CREATE TABLE IF NOT EXISTS score_artwork(id TEXT NOT NULL,source_key TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,source_key));").map_err(|e|e.to_string())?;
     crate::maps::schema(&c)?;
+    crate::downloads::schema(&c)?;
+    c.execute_batch(
+        "CREATE INDEX IF NOT EXISTS scores_map_hash_lower ON scores(lower(json_extract(data,'$.mapHash')));",
+    )
+    .map_err(|e| e.to_string())?;
     if crate::sources::value(&c, "multi_artwork").is_none() {
         c.execute_batch("BEGIN; INSERT OR IGNORE INTO score_artwork SELECT id,'legacy:'||artwork,artwork FROM scores WHERE artwork IS NOT NULL; INSERT OR REPLACE INTO metadata VALUES('multi_artwork','1'); COMMIT;").map_err(|e|e.to_string())?;
     }
@@ -287,7 +292,7 @@ fn accuracy(
     };
     (denominator > 0).then(|| f64::from(numerator) / f64::from(denominator) * 100.)
 }
-fn difficulty(
+pub(crate) fn difficulty(
     map: &rosu_pp::Beatmap,
     mode: u8,
     mods: u32,
@@ -325,7 +330,7 @@ pub(crate) fn complete(attrs: &rosu_pp::any::DifficultyAttributes, s: &Score) ->
         Mania(a) => a.n_objects == s.n300 + s.n100 + s.n50 + s.n_geki + s.n_katu + s.misses,
     }
 }
-fn performance(attrs: rosu_pp::any::DifficultyAttributes, s: &Score) -> f64 {
+pub(crate) fn performance(attrs: rosu_pp::any::DifficultyAttributes, s: &Score) -> f64 {
     attrs
         .performance()
         .mods(s.mods)

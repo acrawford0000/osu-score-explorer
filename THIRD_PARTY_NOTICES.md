@@ -1,6 +1,8 @@
 # Third party acknowledgements
 
-The application uses Tauri, Svelte, Lucide, osu-db, rosu-pp, rosu-mods, SQLite and rusqlite, and the Realm JavaScript SDK. Their copyright notices and license terms remain with their respective projects and packages.
+The application uses Tauri, Svelte, Lucide, osu-db, rosu-pp, rosu-mods, SQLite and rusqlite, reqwest/rustls, zip, and the Realm JavaScript SDK. Their copyright notices and license terms remain with their respective projects and packages.
+
+Beatmap downloads use the public Nekoha mirror service. Optional map identification uses osu! API v2. Neither service is affiliated with this application.
 
 The additional Bento, Serika Dark, Nord, Catppuccin, and Paper color references are adapted from [Monkeytype's theme constants](https://github.com/monkeytypegame/monkeytype/blob/master/frontend/src/ts/constants/themes.ts). Monkeytype is distributed under GPL-3.0. Score Explorer's surface styling is adapted for this application's controls and readability; no Monkeytype application components are included.
 

@@ -30,6 +30,12 @@
 - [x] Show a clear message for missing music, limit lookup wait time, and ignore outdated playback requests.
 - [x] Match imported scores against exact beatmap revisions across connected libraries, with a cached file index.
 - [x] Refresh unmatched score metadata when a beatmap catalog is added or replaced, even if the score database is unchanged.
+- [x] Optional automatic missing-beatmap downloads after import, with a selectable stable Songs destination and no video.
+- [x] Resolve IDs from configured osu!.db catalogs first, then authenticated osu! API checksum lookup; cache resolved IDs.
+- [x] Keep a persistent download queue with pause/resume, retry/backoff, and one download per mapset.
+- [x] Refresh exact-hash score metadata, artwork, stars, PP, and FC PP after each installation, including retained lazer calculation inputs.
+- [ ] Add mirror selection and a manual retry action for unavailable historical revisions.
+- [ ] Watch for externally installed beatmaps and batch their changes into the same incremental recovery path.
 - [x] Provide compact sidebar playback, expanded seek/volume controls, and a draggable in-app player.
 
 ## Calculation speed and responsiveness

@@ -30,6 +30,12 @@ Export available local **stable and lazer replays** as `.osr` files from score c
 
 Open a score and choose **Play song** to listen to its installed beatmap audio from the beginning. Keep browsing with compact sidebar controls, expand them for seeking and volume, or drag a floating player wherever you want within the app.
 
+## Recover missing beatmaps
+
+Enable **automatic beatmap downloads** when importing a score history, or start them later in Settings. Choose a Songs folder and download missing sets **without video**, with progress and pause/resume controls. Matching scores, stars, PP, and FC estimates update as each set finishes.
+
+Use your friend's `osu!.db` to identify maps, or configure osu! API lookup when you only have `scores.db`. Recovery follows your selected player. Older or edited map versions may be unavailable from mirrors; PP is calculated only when the exact version is found.
+
 ## Find your next goal
 
 - **One miss chokes:** the plays that came close.

@@ -1434,3 +1434,12 @@ dd {
   font-size: 11px;
   max-width: 155px;
 }
+.download-options { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.download-options h3 { margin: 0 0 12px; }
+.download-toggle { display: flex; align-items: center; gap: 9px; line-height: 1.6; }
+.download-options details { margin: 16px 0; line-height: 1.8; }
+.download-options summary { cursor: pointer; }
+.download-api-fields { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 12px; }
+.download-options .form-label input, .download-options select { width: 100%; min-width: 0; }
+.download-issues { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.download-notice > span { flex: 1; }

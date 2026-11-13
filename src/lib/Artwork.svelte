@@ -1,17 +1,20 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { artwork, isDesktop } from './backend';
   let { id, available, hue = 240 }: { id: string; available: boolean; hue?: number } = $props();
   let element: HTMLDivElement;
   let image = $state<string | null>(null);
-  onMount(() => {
+  $effect(() => {
+    const scoreId = id;
+    const hasArtwork = available;
+    if (!element) return;
+    image = null;
     let alive = true;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
           observer.disconnect();
-          if (available && isDesktop)
-            artwork(id)
+          if (hasArtwork && isDesktop)
+            artwork(scoreId)
               .then((src) => {
                 if (alive) image = src;
               })

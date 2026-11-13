@@ -83,6 +83,16 @@ Stable imports match exact MD5 revisions across every configured stable Songs fo
 
 The sibling `osu!.db` catalog has its own fingerprint in each stable source configuration. Adding, replacing, or removing it refreshes descriptive metadata even when `scores.db` is unchanged, while reusing cached calculations. A catalog can identify a score's song and difficulty without containing the actual `.osu` file needed for PP calculations or any audio/artwork. `inspect-library --map-audit <stable-folder> [hashes...]` reports score-to-catalog coverage and selected exact-revision matches without modifying game files.
 
-## Current limitations
+## Missing beatmap downloads
+
+Import and Settings expose the same optional no-video downloader and destination. Recovery respects the current player/alias filter, persists jobs in SQLite, and can be resumed after restarting. Catalogs are indexed once per file stamp into an MD5-to-beatmap/set-ID cache. Unknown hashes use the official OAuth client-credentials public scope and checksum lookup. Client ID, secret, and access token are session memory only; no official credentials are sent to mirrors. API lookup is paced to at most one request per 1.1 seconds. Transient failures and HTTP 429 use bounded retries and Retry-After/backoff.
+
+The worker downloads from Nekoha's documented `/api/download/{set}?noVideo=1` endpoint, one set at a time. It strips video entries during extraction as well, validates archive paths and symlinks, enforces size/count limits, and installs into a fresh folder without overwriting existing custom maps. Archives are temporary. The download root is kept as a separate shared map library; there is no synthetic game scores database.
+
+After each install, only the new `.osu` files are hashed and indexed. An expression index resolves affected raw score rows by MD5. Stable calculations reuse the same ruleset/completeness policy; native lazer calculations reconstruct retained judgment/mod/maximum statistics. Existing PP is preserved. Changes commit in one transaction and the interface polls lightweight status plus score patches; it preserves canonical source/player aliases and sends updated summaries to the query worker. Artwork can load when its availability changes. No complete stable/lazer database scan is triggered per download, and Explorer does not edit osu!.db. Stable's own song-select refresh is independent.
+
+Unmatched historical revisions and API not-found results are retained as unavailable rather than repeatedly downloaded. Mirror selection, manual retry of those results, and external filesystem watching remain roadmap items. `cargo test live_mirror_download_and_extraction -- --ignored --nocapture` explicitly exercises one live public download in an isolated temporary directory. Ordinary tests use local HTTP fixtures for both ID paths, authentication, rate limits, archive validation, exact matching, score patches, and calculation persistence.
+
+## Other limitations
 
 Some unsupported mod settings or incomplete/missing map revisions cannot be recalculated. Combined identity checks deliberately leave ambiguous records separate. The frontend and worker retain score summaries in memory; indexed SQLite queries remain an option for much larger libraries. Online replay fetching and direct launch into osu! are not implemented.

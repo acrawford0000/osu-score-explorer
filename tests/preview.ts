@@ -7,6 +7,8 @@ const scores = Array.from({ length: 320 }, (_, batch) =>
 localStorage.setItem('sx-filters', JSON.stringify({ ...defaultFilters, player: 'Sample player' }));
 if (new URLSearchParams(location.search).has('fresh')) localStorage.removeItem('sx-replay-folder');
 const events: string[] = [];
+let downloadStep = -1;
+let downloadPaused = false;
 let sources = [
   { kind: 'stable', root: 'C:\\Games\\osu!', songs: null },
   { kind: 'lazer', root: 'C:\\Games\\osu-lazer', songs: null },
@@ -57,12 +59,25 @@ Object.assign(window, {
   __TAURI_INTERNALS__: {
     convertFileSrc: (path: string) => path,
     invoke: async (command: string, args: Record<string, unknown>) => {
-      if (command === 'load_library')
+      if (command === 'download_status') {
+        if (downloadStep >= 0 && !downloadPaused) downloadStep++;
+        const done = downloadStep >= 5;
+        return { running: downloadStep >= 0 && !done && !downloadPaused, phase: downloadPaused ? 'paused' : done ? 'finished' : downloadStep >= 0 ? 'downloading' : '', message: downloadPaused ? 'Download queue paused. Resume when ready.' : done ? '1 map revision ready' : downloadStep >= 0 ? 'Downloading mapset 5 without video…' : '', total: downloadStep < 0 ? 0 : 1, completed: done ? 1 : 0, pending: done || downloadStep < 0 ? 0 : 1, unavailable: 0, bytes: done ? 0 : 1048576, totalBytes: 2097152, installedSets: done ? 1 : 0, updates: downloadStep === 5 ? [{ ...scores[0], pp: 999, fcPp: 1001, title: 'Recovered song' }] : [], issues: [] };
+      }
+      if (command === 'start_downloads') { downloadStep = 0; downloadPaused = false; events.push('download queue started'); report(); return; }
+      if (command === 'pause_downloads') { downloadPaused = true; events.push('download queue paused'); report(); return; }
+      if (command === 'load_library' || command === 'import_stable' || command === 'import_lazer')
         return {
           scores,
           warnings: [],
           defaultPlayer: 'Sample player',
           engine: 'Synthetic test fixture',
+          calculated: 0,
+          reused: scores.length,
+          unchanged: scores.length,
+          newScores: 0,
+          sourceUnchanged: true,
+          scanMs: 0,
           stableScores: scores.length,
           lazerScores: 0,
           mergedDuplicates: 0,

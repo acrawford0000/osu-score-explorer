@@ -28,6 +28,7 @@
   import Artwork from './lib/Artwork.svelte';
   import TrendChart from './lib/TrendChart.svelte';
   import MusicPlayer, { type Track } from './lib/MusicPlayer.svelte';
+  import DownloadPanel from './lib/DownloadPanel.svelte';
   import {
     defaultFilters,
     modLabel,
@@ -49,6 +50,10 @@
     exportReplay,
     saveSources,
     audioTrack,
+    startDownloads,
+    downloadStatus,
+    pauseDownloads,
+    type DownloadStatus,
   } from './lib/backend';
   import { themes } from './lib/themes';
   import type { QueryResult } from './lib/query';
@@ -93,6 +98,15 @@
     ),
   );
   let replayFolder = $state(read<string>('sx-replay-folder', ''));
+  let automaticDownloads = $state(read<boolean>('sx-auto-downloads', false));
+  let downloadSongs = $state(read<string>('sx-download-songs', ''));
+  let apiClientId = $state(''), apiClientSecret = $state('');
+  let queue = $state.raw<DownloadStatus | null>(null);
+  const downloadFolders = $derived([...new Set(gameSources.filter((s) => s.kind === 'stable' && s.root).map((s) => s.songs || `${s.root.replace(/[\\/]+$/, '')}/Songs`))]);
+  $effect(() => {
+    localStorage.setItem('sx-auto-downloads', JSON.stringify(automaticDownloads));
+    localStorage.setItem('sx-download-songs', JSON.stringify(downloadSongs));
+  });
   let replayIds = $state.raw(new Set<string>());
   let replayWarning = $state('');
   let exporting = $state('');
@@ -129,6 +143,29 @@
     points: [],
   });
   let byId = $derived(new Map(scores.map((s) => [s.id, s])));
+  onMount(() => {
+    if (!isDesktop) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const status = await downloadStatus();
+        if (!active) return;
+        queue = status;
+        if (!sample && status.updates.length) {
+          const patches = new Map(status.updates.map((s) => [s.id, s]));
+          scores = scores.map((s) => {
+            const patch = patches.get(s.id);
+            return patch ? { ...s, ...patch, sources: s.sources, playerAliases: s.playerAliases } : s;
+          });
+          if (selected && patches.has(selected.id)) selected = scores.find((s) => s.id === selected!.id) || selected;
+        }
+      } catch { /* An older preview may not expose a queue yet. */ }
+      if (active) timer = setTimeout(poll, 700);
+    }
+    void poll();
+    return () => { active = false; clearTimeout(timer); };
+  });
   let visible = $derived(
     result.ids.flatMap((id) => {
       const s = byId.get(id);
@@ -321,6 +358,23 @@
       exporting = '';
     }
   }
+  async function chooseDownloadSongs() {
+    if (!isDesktop) return;
+    const { open } = await import('@tauri-apps/plugin-dialog');
+    const folder = await open({ directory: true, multiple: false, title: 'Choose a stable Songs folder for downloaded beatmaps' });
+    if (typeof folder === 'string') downloadSongs = folder;
+  }
+  async function beginDownloads() {
+    try {
+      if (!downloadSongs.trim()) { error = 'Choose a Songs folder for downloaded beatmaps first.'; importing = true; return; }
+      await startDownloads({ songs: downloadSongs, player: filters.player || null, clientId: apiClientId.trim(), clientSecret: apiClientSecret.trim() });
+      queue = { running: true, phase: 'preparing', message: 'Preparing missing beatmap downloads…', total: 0, completed: 0, unavailable: 0, pending: 0, bytes: 0, totalBytes: null, installedSets: 0, updates: [], issues: [] };
+      importing = false; error = '';
+    } catch (e) { error = String(e); }
+  }
+  async function pauseQueue() {
+    try { await pauseDownloads(); } catch (e) { error = String(e); }
+  }
   function addSource(kind: 'stable' | 'lazer') {
     gameSources.push({ kind, root: '', songs: null });
     importing = true;
@@ -358,6 +412,7 @@
     }
   }
   async function scan(force = false, target: 'both' | 'stable' | 'lazer' = 'both') {
+    if (queue?.running) { error = 'Pause beatmap downloads before starting another import.'; return; }
     busy = true;
     error = '';
     importing = false;
@@ -396,6 +451,7 @@
     } else message = '';
     error = problems.join(' ');
     busy = false;
+    if (latest && automaticDownloads) await beginDownloads();
   }
   function preset(id: string) {
     filters.preset = id;
@@ -497,6 +553,7 @@
             onclick={() => (message = '')}><X size={14} /></button
           >
         </div>{/if}
+      {#if queue?.running}<div class="notice download-notice" role="status"><Download size={16}/><span>{queue.message}</span><button class="button small" onclick={pauseQueue}>Pause downloads</button></div>{/if}
       {#if section === 'explore'}
         <div class="page-heading">
           <div>
@@ -965,6 +1022,7 @@
               <button class="text-button" onclick={() => (replayFolder = '')}>Clear default</button>
             </div>
             {#if replayWarning}<p class="muted">{replayWarning}</p>{/if}
+            <DownloadPanel bind:automatic={automaticDownloads} bind:songs={downloadSongs} bind:clientId={apiClientId} bind:clientSecret={apiClientSecret} folders={downloadFolders} player={filters.player} status={queue} disabled={busy || sample} desktop={isDesktop} choose={chooseDownloadSongs} start={beginDownloads} pause={pauseQueue}/>
             <div class="setting-actions">
               <button class="button" disabled={busy || !isDesktop} onclick={() => scan()}
                 ><RefreshCw size={16} />Rescan all folders</button
@@ -1044,8 +1102,8 @@
             </dl>
             <p>
               Stable and lazer import, reversible duplicate links, cached calculations, score
-              exploration, and progression are connected. Online map recovery and automatic updates
-              remain planned.
+              exploration, and progression are connected. Recover missing beatmaps through no-video
+              downloads, with catalog IDs or osu! API lookup and automatic score updates.
             </p>
             <button
               class="button"
@@ -1148,6 +1206,7 @@
               </div></label
             >{/if}
         </div>{/each}
+      <DownloadPanel bind:automatic={automaticDownloads} bind:songs={downloadSongs} bind:clientId={apiClientId} bind:clientSecret={apiClientSecret} folders={downloadFolders} player={filters.player} status={queue} disabled={busy || sample} desktop={isDesktop} choose={chooseDownloadSongs} start={beginDownloads} pause={pauseQueue}/>
       <div class="setting-actions">
         <button class="button" onclick={() => addSource('stable')}>Add stable folder</button><button
           class="button"

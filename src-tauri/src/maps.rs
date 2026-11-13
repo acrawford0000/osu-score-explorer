@@ -39,7 +39,7 @@ fn relative(parent: &Path, value: &str) -> String {
         .to_string_lossy()
         .into()
 }
-fn parse(root: &Path, file: &Path, bytes: &[u8]) -> LocalMap {
+pub(crate) fn parse(root: &Path, file: &Path, bytes: &[u8]) -> LocalMap {
     let text = String::from_utf8_lossy(bytes);
     let mut section = "";
     let mut fields = HashMap::new();
@@ -130,6 +130,14 @@ pub fn refresh(
     schema(c)?;
     let mut roots = HashSet::new();
     roots.insert(current_songs.to_path_buf());
+    if let Some(root) = sources::value(c, "download_songs") {
+        roots.insert(PathBuf::from(root));
+    }
+    if let Some(paths) = sources::value(c, "download_roots")
+        .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
+    {
+        roots.extend(paths.into_iter().map(PathBuf::from));
+    }
     for source in sources::list(c)? {
         if source.kind == "stable" {
             roots.insert(

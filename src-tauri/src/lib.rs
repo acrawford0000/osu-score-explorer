@@ -1,7 +1,9 @@
 pub mod audio;
+pub mod downloads;
 pub mod lazer;
 pub mod library;
 pub mod maps;
+pub mod recovery;
 pub mod replays;
 pub mod sources;
 
@@ -20,6 +22,7 @@ mod desktop {
         path: PathBuf,
         importing: Arc<AtomicBool>,
         replay_lock: Arc<Mutex<()>>,
+        downloads: Arc<crate::downloads::Controller>,
     }
     struct ImportGuard(Arc<AtomicBool>);
     impl Drop for ImportGuard {
@@ -28,6 +31,47 @@ mod desktop {
         }
     }
 
+    #[tauri::command]
+    fn download_status(state: State<'_, Store>) -> crate::downloads::Status {
+        state.downloads.status()
+    }
+    #[tauri::command]
+    fn pause_downloads(state: State<'_, Store>) {
+        state.downloads.pause();
+    }
+    #[tauri::command]
+    fn start_downloads(
+        options: crate::downloads::Options,
+        state: State<'_, Store>,
+    ) -> Result<(), String> {
+        if !std::path::Path::new(&options.songs).is_absolute()
+            || !std::path::Path::new(&options.songs).is_dir()
+        {
+            return Err("Choose an existing Songs folder first".into());
+        }
+        state
+            .importing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| "Pause the download queue or wait for the current import to finish")?;
+        let guard = ImportGuard(state.importing.clone());
+        state
+            .downloads
+            .running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| "The download queue is already running")?;
+        state.downloads.pause.store(false, Ordering::Release);
+        let ctl = state.downloads.clone();
+        let path = state.path.clone();
+        std::thread::spawn(move || {
+            let _guard = guard;
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::downloads::run(&path, options, ctl.clone())
+            }))
+            .unwrap_or_else(|_| Err("The download worker stopped. Resume to retry.".into()));
+            crate::downloads::finish(&ctl, result);
+        });
+        Ok(())
+    }
     #[tauri::command]
     async fn audio_track(
         id: String,
@@ -152,10 +196,13 @@ mod desktop {
             .setup(|app| {
                 let directory = app.path().app_local_data_dir()?;
                 std::fs::create_dir_all(&directory)?;
+                let downloads = Arc::new(crate::downloads::Controller::default());
+                downloads.restore(&directory.join("library.sqlite"));
                 app.manage(Store {
                     path: directory.join("library.sqlite"),
                     importing: Arc::new(AtomicBool::new(false)),
                     replay_lock: Arc::new(Mutex::new(())),
+                    downloads,
                 });
                 Ok(())
             })
@@ -167,7 +214,10 @@ mod desktop {
                 replay_availability,
                 export_replay,
                 save_sources,
-                audio_track
+                audio_track,
+                start_downloads,
+                download_status,
+                pause_downloads
             ])
             .run(tauri::generate_context!())
             .expect("Could not start Score Explorer");
