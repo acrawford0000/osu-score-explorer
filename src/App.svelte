@@ -26,6 +26,7 @@
     Download,
   } from '@lucide/svelte';
   import Artwork from './lib/Artwork.svelte';
+  import CopyTable from './lib/CopyTable.svelte';
   import TrendChart from './lib/TrendChart.svelte';
   import MusicPlayer, { type Track } from './lib/MusicPlayer.svelte';
   import DownloadPanel from './lib/DownloadPanel.svelte';
@@ -889,7 +890,8 @@
           ><label class="sort-field"
             ><span>Sort by</span><select aria-label="Sort scores" bind:value={filters.sort}
               ><option value="pp">Highest PP</option><option value="stars">Highest stars</option
-              ><option value="gain">FC PP gain</option><option value="accuracy">Accuracy</option
+              ><option value="fcPp">PP if FC</option><option value="gain">FC PP gain</option><option
+                value="accuracy">Accuracy</option
               ><option value="date">Most recent</option></select
             ></label
           >
@@ -906,11 +908,12 @@
           </div>
         </div>
         {#if advanced}<div class="advanced-filters">
-            <label title="Non-perfect judgments: 100s, 50s and misses in standard."
+            <label
+              title="Show 1 through N non-perfect judgments: 100s, 50s and misses in standard. Excludes SSs; FCs with non-300s remain visible."
               >Max non-300s<input
                 id="non300"
                 type="number"
-                min="0"
+                min="1"
                 step="1"
                 placeholder="Any"
                 value={filters.maxNon300 ?? ''}
@@ -928,17 +931,18 @@
                 step="0.1"
                 bind:value={filters.minStars}
               /></label
-            ><label
+            ><label title="Show scores with 1 through N misses. Zero-miss plays are excluded."
               >Maximum misses<input
                 type="number"
-                min="0"
+                min="1"
+                step="1"
                 placeholder="Any"
                 value={filters.maxMisses ?? ''}
                 oninput={(e) =>
                   (filters.maxMisses =
                     e.currentTarget.value === ''
                       ? null
-                      : Math.max(0, Number(e.currentTarget.value)))}
+                      : Math.max(0, Math.floor(Number(e.currentTarget.value))))}
               /></label
             ><label
               >Mods<select bind:value={filters.mod}
@@ -1101,7 +1105,33 @@
                 </div>
               </article>{/each}
           </div>
-        {:else}<div class="table-wrap">
+        {:else}<CopyTable
+            title={`Scores · ${selectedPlayerLabel || 'All players'} · Page ${page + 1}`}
+            disabled={searching}
+            columns={[
+              { label: 'Beatmap', maxWidth: 60 },
+              { label: 'Mods', maxWidth: 24 },
+              { label: 'Stars', right: true },
+              { label: 'Accuracy', right: true },
+              { label: 'Misses', right: true },
+              { label: 'Combo', right: true },
+              { label: 'PP', right: true },
+              { label: 'PP if FC', right: true },
+              { label: 'Date' },
+            ]}
+            rows={visible.map((s) => [
+              `${s.artist} — ${s.title} [${s.difficulty}]${s.fc ? ' · FC' : ''}`,
+              scoreMods(s),
+              number(s.stars, 2),
+              `${number(s.accuracy, 2)}%`,
+              String(s.misses),
+              `${number(s.combo)}×`,
+              number(s.pp, 1),
+              number(s.fcPp, 1),
+              s.date.slice(0, 10),
+            ])}
+          />
+          <div class="table-wrap">
             <table>
               <thead
                 ><tr
@@ -1252,7 +1282,23 @@
             are excluded and counted below.
           </p>
         </div>
-        {#if trendPoints.length}<div class="table-wrap">
+        {#if trendPoints.length}<CopyTable
+            title={`Average ${metric} · ${selectedPlayerLabel} · ${bucket}`}
+            disabled={searching}
+            columns={[
+              { label: 'Period' },
+              { label: `Average ${metric}`, right: true },
+              { label: 'Included scores', right: true },
+              { label: 'Values unavailable', right: true },
+            ]}
+            rows={trendPoints.map((p) => [
+              p.period,
+              number(p.value, 2),
+              String(p.count),
+              String(p.missing),
+            ])}
+          />
+          <div class="table-wrap">
             <table>
               <thead
                 ><tr

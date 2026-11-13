@@ -206,9 +206,9 @@ export function filterScores(scores: Score[], f: Filters): Score[] {
     if (!terms.every((t) => haystack.includes(t)) || (f.player && !matchesPlayer(s, f.player)))
       return false;
     if (f.minStars > 0 && (s.stars === null || s.stars < f.minStars)) return false;
-    if (f.maxMisses !== null && s.misses > f.maxMisses) return false;
+    if (f.maxMisses !== null && (s.misses < 1 || s.misses > f.maxMisses)) return false;
     if (f.mod && scoreMods(s) !== f.mod) return false;
-    if (f.maxNon300 !== null && non300(s) > f.maxNon300) return false;
+    if (f.maxNon300 !== null && (s.ss || non300(s) < 1 || non300(s) > f.maxNon300)) return false;
     if ((f.from && s.date.slice(0, 10) < f.from) || (f.to && s.date.slice(0, 10) > f.to))
       return false;
     return (
@@ -225,17 +225,19 @@ export function filterScores(scores: Score[], f: Filters): Score[] {
     );
   });
   const value = (s: Score): number | null =>
-    f.sort === 'stars'
-      ? s.stars
-      : f.sort === 'accuracy'
-        ? s.accuracy
-        : f.sort === 'date'
-          ? Date.parse(s.date)
-          : f.sort === 'gain'
-            ? s.fcPp !== null && s.pp !== null
-              ? s.fcPp - s.pp
-              : null
-            : s.pp;
+    f.sort === 'fcPp'
+      ? s.fcPp
+      : f.sort === 'stars'
+        ? s.stars
+        : f.sort === 'accuracy'
+          ? s.accuracy
+          : f.sort === 'date'
+            ? Date.parse(s.date)
+            : f.sort === 'gain'
+              ? s.fcPp !== null && s.pp !== null
+                ? s.fcPp - s.pp
+                : null
+              : s.pp;
   return selected.sort((a, b) => {
     const x = value(a),
       y = value(b);

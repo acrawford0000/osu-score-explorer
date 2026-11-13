@@ -11,6 +11,7 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 ## Explore your scores
 
 - Browse artwork cards or switch to a detailed score table.
+- Copy your current score page or progression table as aligned text for Discord, with message-sized parts for longer tables.
 - Search by song, artist, difficulty, or mapper.
 - Filter by player, gamemode, stable/lazer, mods, date, star rating, and misses.
 - Keep a player's stable and lazer scores together across matching usernames and known name changes, with one player option regardless of capitalization.
@@ -18,7 +19,7 @@ osu! Score Explorer brings local **stable and lazer scores** into one desktop sc
 - Connect multiple stable and lazer installations, including separate Songs folders.
 - Explore an imported score history using beatmaps from your other connected libraries.
 - Jump straight to the first or last page, or move ten pages at a time.
-- Sort by PP, stars, accuracy, most recent, or potential FC PP gain.
+- Sort by PP, PP if FC, stars, accuracy, most recent, or potential FC PP gain.
 - See achieved combo alongside the map's maximum combo.
 - See hit counts on every card to understand exactly how a near-SS play fell short.
 - Search and refine your library while results update in the background.
@@ -52,6 +53,8 @@ Use your friend's `osu!.db` to identify maps, or configure osu! API lookup when 
 - **PP if FC:** compare your result with an estimated full-combo result.
 
 Your filters work together, so you can search for something as specific as recent HD one-miss plays above 6 stars, or older SS opportunities with at most three non-300 judgments.
+
+Setting **Maximum misses** shows 1–N misses and excludes zero-miss plays. **Max non-300s** shows 1–N imperfect judgments and excludes SSs, while keeping FCs with 100s or 50s. Clear either field to remove that limit.
 
 ## See your progression
 

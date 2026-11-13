@@ -11,6 +11,35 @@ import {
 import { demoScores } from '../src/lib/demo';
 const base = demoScores()[0];
 describe('score exploration', () => {
+  it('uses maximum misses as a 1 through N choke range', () => {
+    const rows = [0, 1, 2, 3].map((misses) => ({
+      ...base,
+      id: String(misses),
+      misses,
+      fc: misses === 0,
+    }));
+    expect(
+      filterScores(rows, { ...defaultFilters, maxMisses: 2 })
+        .map((s) => s.misses)
+        .sort(),
+    ).toEqual([1, 2]);
+    expect(filterScores(rows, { ...defaultFilters, maxMisses: 0 })).toHaveLength(0);
+    expect(filterScores(rows, { ...defaultFilters, maxMisses: null })).toHaveLength(4);
+  });
+  it('sorts by potential FC PP independently of achieved PP or PP gain, with missing values last', () => {
+    const rows = [
+      { ...base, id: 'a', pp: 400, fcPp: 500 },
+      { ...base, id: 'b', pp: 500, fcPp: 650 },
+      { ...base, id: 'c', pp: 100, fcPp: 600 },
+      { ...base, id: 'missing', pp: 999, fcPp: null },
+    ];
+    expect(filterScores(rows, { ...defaultFilters, sort: 'fcPp' }).map((s) => s.id)).toEqual([
+      'b',
+      'c',
+      'a',
+      'missing',
+    ]);
+  });
   it('clamps first, last and ten-page jumps to valid page boundaries', () => {
     expect(clampPage(10, 30720, 36)).toBe(10);
     expect(clampPage(-9, 30720, 36)).toBe(0);
@@ -62,8 +91,8 @@ describe('score exploration', () => {
   it('allows SS farmers to choose the total number of non-300 judgments', () => {
     const rows = [
       { ...base, id: 'miss', misses: 1, n100: 0, n50: 0, ss: false },
-      { ...base, id: '100', misses: 0, n100: 1, n50: 0, ss: false },
-      { ...base, id: '50s', misses: 0, n100: 0, n50: 2, ss: false },
+      { ...base, id: '100', misses: 0, n100: 1, n50: 0, fc: true, ss: false },
+      { ...base, id: '50s', misses: 0, n100: 0, n50: 2, fc: true, ss: false },
       { ...base, id: '100s', misses: 0, n100: 3, n50: 0, ss: false },
       { ...base, id: 'ss', misses: 0, n100: 0, n50: 0, ss: true },
     ];
@@ -73,9 +102,13 @@ describe('score exploration', () => {
     expect(filterScores(rows, { ...defaultFilters, preset: 'ssChoke', maxNon300: 2 })).toHaveLength(
       3,
     );
-    expect(filterScores(rows, { ...defaultFilters, maxNon300: 0 }).map((s) => s.id)).toEqual([
-      'ss',
-    ]);
+    expect(filterScores(rows, { ...defaultFilters, maxNon300: 0 })).toHaveLength(0);
+    expect(
+      filterScores(rows, { ...defaultFilters, maxNon300: 2 })
+        .map((s) => s.id)
+        .sort(),
+    ).toEqual(['100', '50s', 'miss']);
+    expect(filterScores(rows, { ...defaultFilters, maxNon300: null })).toHaveLength(5);
   });
   it('uses verified player aliases for a unified history', () => {
     expect(

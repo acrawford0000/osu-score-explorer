@@ -181,8 +181,11 @@ mod desktop {
             .map_err(|e| e.to_string())?
     }
     #[tauri::command]
-    fn disconnect_online_replays(state: State<'_, Store>) {
-        state.online_replays.disconnect();
+    async fn disconnect_online_replays(state: State<'_, Store>) -> Result<(), String> {
+        let service = state.online_replays.clone();
+        tauri::async_runtime::spawn_blocking(move || service.disconnect())
+            .await
+            .map_err(|e| e.to_string())
     }
     #[tauri::command]
     async fn check_online_replay(

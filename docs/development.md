@@ -89,6 +89,10 @@ Score details resolve audio across configured libraries in blocking tasks, using
 
 The browser fixture provides a generated silent WAV for playback, seek, float/dock, and drag checks. `inspect-library --audio-audit <app-cache.sqlite>` checks installed audio resolution without playing music.
 
+## Copying tables
+
+Score table view copies the currently displayed page in its filtered/sorted order; progression copies the displayed metric and all displayed periods. Values use the same rounding, percentages, dates, and unavailable markers as the interface. Discord output uses aligned plain-text code blocks, with repeated headings in chunks at most 2,000 characters. The first click copies the first part; subsequent controls copy the remaining parts or the entire snapshot. Copying never posts to Discord. Long song labels are shortened with an ellipsis to keep columns readable, and line breaks/backticks in labels cannot escape the code block. Tests cover row preservation across parts, numeric alignment, Unicode widths, and formatting escapes.
+
 Use `?audio=missing` or `?audio=hang` on the browser fixture to exercise missing-file feedback and timeout recovery.
 
 ## Shared beatmap index
