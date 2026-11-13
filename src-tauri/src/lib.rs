@@ -1,3 +1,4 @@
+pub mod api_settings;
 pub mod audio;
 pub mod calculators;
 pub mod downloads;
@@ -27,6 +28,7 @@ mod desktop {
         path: PathBuf,
         importing: Arc<AtomicBool>,
         replay_lock: Arc<Mutex<()>>,
+        api_settings_lock: Arc<Mutex<()>>,
         online_replays: Arc<crate::online_replays::Service>,
         downloads: Arc<crate::downloads::Controller>,
         calculators: Arc<crate::calculators::Controller>,
@@ -107,10 +109,19 @@ mod desktop {
         state.downloads.pause();
     }
     #[tauri::command]
-    fn start_downloads(
-        options: crate::downloads::Options,
+    async fn start_downloads(
+        mut options: crate::downloads::Options,
         state: State<'_, Store>,
     ) -> Result<(), String> {
+        let service = state.online_replays.clone();
+        let credentials = tauri::async_runtime::spawn_blocking(move || service.credentials())
+            .await
+            .map_err(|e| e.to_string())??;
+        options.client_id = credentials
+            .as_ref()
+            .map(|c| c.client_id.clone())
+            .unwrap_or_default();
+        options.client_secret = credentials.map(|c| c.client_secret).unwrap_or_default();
         if !std::path::Path::new(&options.songs).is_absolute()
             || !std::path::Path::new(&options.songs).is_dir()
         {
@@ -171,21 +182,67 @@ mod desktop {
         .map_err(|e| e.to_string())?
     }
     #[tauri::command]
-    async fn connect_online_replays(
-        credentials: crate::online_replays::Credentials,
-        state: State<'_, Store>,
-    ) -> Result<(), String> {
-        let service = state.online_replays.clone();
-        tauri::async_runtime::spawn_blocking(move || service.connect(credentials))
+    async fn open_osu_api_settings() -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(crate::api_settings::open_registration)
             .await
             .map_err(|e| e.to_string())?
     }
     #[tauri::command]
-    async fn disconnect_online_replays(state: State<'_, Store>) -> Result<(), String> {
+    async fn connect_online_replays(
+        credentials: crate::online_replays::Credentials,
+        state: State<'_, Store>,
+    ) -> Result<crate::api_settings::State, String> {
         let service = state.online_replays.clone();
-        tauri::async_runtime::spawn_blocking(move || service.disconnect())
-            .await
-            .map_err(|e| e.to_string())
+        let path = state.path.clone();
+        let lock = state.api_settings_lock.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|e| e.to_string())?;
+            crate::api_settings::connect(&path, &service, credentials)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    async fn disconnect_online_replays(
+        state: State<'_, Store>,
+    ) -> Result<crate::api_settings::State, String> {
+        let service = state.online_replays.clone();
+        let path = state.path.clone();
+        let lock = state.api_settings_lock.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|e| e.to_string())?;
+            crate::api_settings::disconnect(&path, &service)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    async fn restore_api_connection(
+        state: State<'_, Store>,
+    ) -> Result<crate::api_settings::State, String> {
+        let service = state.online_replays.clone();
+        let path = state.path.clone();
+        let lock = state.api_settings_lock.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|e| e.to_string())?;
+            crate::api_settings::restore(&path, &service)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+    #[tauri::command]
+    async fn forget_api_connection(
+        state: State<'_, Store>,
+    ) -> Result<crate::api_settings::State, String> {
+        let service = state.online_replays.clone();
+        let path = state.path.clone();
+        let lock = state.api_settings_lock.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|e| e.to_string())?;
+            crate::api_settings::forget(&path, &service)
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     #[tauri::command]
     async fn check_online_replay(
@@ -309,6 +366,7 @@ mod desktop {
                     path: directory.join("library.sqlite"),
                     importing: Arc::new(AtomicBool::new(false)),
                     replay_lock: Arc::new(Mutex::new(())),
+                    api_settings_lock: Arc::new(Mutex::new(())),
                     online_replays: Arc::new(crate::online_replays::Service::default()),
                     downloads,
                     calculators: Arc::new(crate::calculators::Controller::default()),
@@ -321,8 +379,11 @@ mod desktop {
                 import_lazer,
                 artwork,
                 replay_availability,
+                open_osu_api_settings,
                 connect_online_replays,
                 disconnect_online_replays,
+                restore_api_connection,
+                forget_api_connection,
                 check_online_replay,
                 export_replay,
                 save_sources,

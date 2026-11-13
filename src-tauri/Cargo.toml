@@ -1,6 +1,6 @@
 [package]
 name = "score-explorer"
-version = "0.7.0"
+version = "0.8.2"
 description = "Local osu! score explorer"
 edition = "2024"
 default-run = "score-explorer"
@@ -43,3 +43,6 @@ required-features = ["desktop"]
 [[bin]]
 name = "inspect-library"
 path = "src/inspect.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

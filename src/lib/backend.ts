@@ -27,16 +27,22 @@ export type OnlineReplayStatus = {
   retryAfter: number | null;
 };
 export const connectOnlineReplays = (clientId: string, clientSecret: string) =>
-  invoke<void>('connect_online_replays', { credentials: { clientId, clientSecret } });
-export const disconnectOnlineReplays = () => invoke<void>('disconnect_online_replays');
+  invoke<ApiConnection>('connect_online_replays', { credentials: { clientId, clientSecret } });
+export type ApiConnection = {
+  connected: boolean;
+  saved: boolean;
+  clientId: string;
+  message: string;
+};
+export const disconnectOnlineReplays = () => invoke<ApiConnection>('disconnect_online_replays');
+export const restoreApiConnection = () => invoke<ApiConnection>('restore_api_connection');
+export const forgetApiConnection = () => invoke<ApiConnection>('forget_api_connection');
 export const checkOnlineReplay = (id: string) =>
   invoke<OnlineReplayStatus>('check_online_replay', { id });
 
 export type DownloadOptions = {
   songs: string;
   player: string | null;
-  clientId: string;
-  clientSecret: string;
 };
 export type DownloadStatus = {
   activeDownloads?: number;
@@ -78,3 +84,5 @@ export const refreshPlayerIdentity = (id: number) =>
     'refresh_player_identity',
     { id },
   );
+
+export const openApiRegistration = () => invoke<void>('open_osu_api_settings');

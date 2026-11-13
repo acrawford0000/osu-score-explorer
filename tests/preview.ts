@@ -79,9 +79,29 @@ Object.assign(window, {
   __TAURI_INTERNALS__: {
     convertFileSrc: (path: string) => path,
     invoke: async (command: string, args: Record<string, unknown>) => {
-      if (command === 'connect_online_replays' || command === 'disconnect_online_replays') return;
+      if (command === 'open_osu_api_settings') return;
+      if (command === 'restore_api_connection')
+        return {
+          connected: new URLSearchParams(location.search).has('savedApi'),
+          saved: new URLSearchParams(location.search).has('savedApi'),
+          clientId: new URLSearchParams(location.search).has('savedApi') ? '12345' : '',
+          message: '',
+        };
+      if (command === 'connect_online_replays')
+        return {
+          connected: true,
+          saved: true,
+          clientId: (args.credentials as { clientId: string }).clientId,
+          message: '',
+        };
+      if (command === 'disconnect_online_replays')
+        return { connected: false, saved: true, clientId: '12345', message: '' };
+      if (command === 'forget_api_connection')
+        return { connected: false, saved: false, clientId: '', message: '' };
       if (command === 'check_online_replay') {
         const id = String(args.id);
+        if (new URLSearchParams(location.search).has('failedReplay') && id.startsWith('0:'))
+          throw new Error('Online score details do not match the imported score');
         const available = Number(id.split(':')[0]) % 2 === 0;
         return {
           id,

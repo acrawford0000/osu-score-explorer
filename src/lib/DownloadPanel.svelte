@@ -3,8 +3,7 @@
   let {
     automatic = $bindable(false),
     songs = $bindable(''),
-    clientId = $bindable(''),
-    clientSecret = $bindable(''),
+    connectApi,
     folders,
     player,
     status,
@@ -16,8 +15,7 @@
   }: {
     automatic: boolean;
     songs: string;
-    clientId: string;
-    clientSecret: string;
+    connectApi: () => void;
     folders: string[];
     player: string;
     status: DownloadStatus | null;
@@ -29,8 +27,8 @@
   } = $props();
 </script>
 
-<div class="download-options">
-  <h3>Missing beatmaps</h3>
+<details class="download-options">
+  <summary>Missing beatmaps</summary>
   <label class="download-toggle"
     ><input type="checkbox" bind:checked={automatic} />Automatically download missing beatmaps after
     import · no video</label
@@ -70,35 +68,18 @@
           >{/each}</select
       >
     </label>{/if}
-  <details>
-    <summary>osu! API lookup · optional when you have their osu!.db</summary>
-    <p class="muted">
-      Catalog IDs are used first. For missing IDs, enter your osu! OAuth application's client ID and
-      secret. Credentials are kept for this session only.
-    </p>
-    <a href="https://osu.ppy.sh/home/account/edit#oauth" target="_blank" rel="noreferrer"
-      >Manage osu! OAuth applications</a
-    >
-    <div class="download-api-fields">
-      <label class="form-label"
-        >Client ID<input
-          aria-label="osu API client ID"
-          bind:value={clientId}
-          inputmode="numeric"
-          autocomplete="off"
-          disabled={status?.running}
-        /></label
-      ><label class="form-label"
-        >Client secret<input
-          aria-label="osu API client secret"
-          type="password"
-          bind:value={clientSecret}
-          autocomplete="off"
-          disabled={status?.running}
-        /></label
-      >
-    </div>
-  </details>
+  <p class="muted">
+    Your osu!.db catalog is checked first. Connect the API to find beatmap IDs missing from the
+    catalog.
+  </p>
+  <a
+    href="#osu-api-settings"
+    onclick={(e) => {
+      e.preventDefault();
+      connectApi();
+    }}>Connect API</a
+  >
+
   <div class="setting-actions">
     <button
       class="button"
@@ -125,4 +106,4 @@
   {#if status?.issues.length}<ul class="download-issues">
       {#each status.issues as issue}<li>{issue}</li>{/each}
     </ul>{/if}
-</div>
+</details>

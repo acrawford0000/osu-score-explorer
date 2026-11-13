@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { version } from '../package.json';
   import {
     Search,
@@ -52,6 +52,10 @@
     exportReplay,
     connectOnlineReplays,
     disconnectOnlineReplays,
+    restoreApiConnection,
+    forgetApiConnection,
+    openApiRegistration,
+    type ApiConnection,
     checkOnlineReplay,
     type OnlineReplayStatus,
     saveSources,
@@ -70,6 +74,7 @@
   import { themes } from './lib/themes';
   import type { QueryResult } from './lib/query';
   import { withTimeout } from './lib/async';
+  import { checkReplayPage } from './lib/replayQueue';
 
   function showDialog(node: HTMLDialogElement) {
     const previous = document.activeElement as HTMLElement | null;
@@ -141,6 +146,10 @@
   let onlineWarning = $state(''),
     onlineEpoch = $state(0);
   let onlineReplays = $state.raw(new Map<string, OnlineReplayStatus>());
+  let onlineProgress = $state({ checked: 0, total: 0, available: 0, skipped: 0 });
+  const onlineProgressLabel = $derived(
+    `Online replays: ${onlineProgress.checked}/${onlineProgress.total} checked · ${onlineProgress.available} available${onlineProgress.skipped ? ` · ${onlineProgress.skipped} could not be verified` : ''}${onlineChecking ? ' · Checking…' : onlineProgress.checked < onlineProgress.total ? ' · Paused' : ''}`,
+  );
   let exporting = $state('');
   let exportFeedback = $state<{ id: string; text: string } | null>(null);
   let track = $state.raw<Track | null>(null);
@@ -259,6 +268,7 @@
     const ids: string[] = JSON.parse(replayPageKey);
     const online = onlineEnabled && onlineConnected;
     onlineChecking = false;
+    onlineProgress = { checked: 0, total: 0, available: 0, skipped: 0 };
     void onlineEpoch;
     if (!isDesktop || sample || !ids.length) {
       replayIds = new Set();
@@ -275,26 +285,48 @@
         if (!online) return;
         await new Promise((resolve) => setTimeout(resolve, 300));
         if (!active) return;
+        const pending = ids.filter((id) => !status.available.some((r) => r.id === id));
+        onlineProgress = { checked: 0, total: pending.length, available: 0, skipped: 0 };
         onlineChecking = true;
         try {
-          for (const id of ids.filter((id) => !status.available.some((r) => r.id === id))) {
-            if (!active) break;
-            const result = await checkOnlineReplay(id);
-            if (!active) break;
-            onlineReplays = new Map(onlineReplays).set(id, result);
-            if (result.state === 'rate-limited') {
-              onlineWarning = result.message;
-              retry = setTimeout(
-                () => {
-                  if (active) onlineEpoch++;
-                },
-                Math.max(1, result.retryAfter || 60) * 1000,
-              );
-              break;
-            }
-          }
-        } catch (e) {
-          if (active) onlineWarning = String(e);
+          await checkReplayPage(
+            pending,
+            checkOnlineReplay,
+            () => active,
+            (result) => {
+              onlineReplays = new Map(onlineReplays).set(result.id, result);
+              if (result.state === 'rate-limited') {
+                onlineWarning = result.message;
+                retry = setTimeout(
+                  () => {
+                    if (active) onlineEpoch++;
+                  },
+                  Math.max(1, result.retryAfter || 60) * 1000,
+                );
+                return;
+              }
+              onlineProgress = {
+                ...onlineProgress,
+                checked: onlineProgress.checked + 1,
+                available: onlineProgress.available + Number(result.state === 'available'),
+                skipped: onlineProgress.skipped + Number(result.state === 'mismatch'),
+              };
+            },
+            (id, e) => {
+              const message = String(e);
+              onlineReplays = new Map(onlineReplays).set(id, {
+                id,
+                state: 'error',
+                message,
+                retryAfter: null,
+              });
+              onlineProgress = {
+                ...onlineProgress,
+                checked: onlineProgress.checked + 1,
+                skipped: onlineProgress.skipped + 1,
+              };
+            },
+          );
         } finally {
           if (active) onlineChecking = false;
         }
@@ -535,13 +567,48 @@
       exporting = '';
     }
   }
+  let apiSaved = $state(false),
+    savedApiClientId = $state('');
+  function applyApiState(state: ApiConnection) {
+    onlineConnected = state.connected;
+    apiSaved = state.saved;
+    savedApiClientId = state.clientId;
+    apiClientId = state.clientId;
+    apiClientSecret = '';
+    onlineWarning = state.message;
+    if (state.connected) onlineEpoch++;
+  }
+  onMount(() => {
+    if (!isDesktop) return;
+    onlineConnecting = true;
+    void restoreApiConnection()
+      .then(applyApiState)
+      .catch((e) => (onlineWarning = String(e)))
+      .finally(() => (onlineConnecting = false));
+  });
+  async function showApiSettings() {
+    importing = false;
+    section = 'settings';
+    await tick();
+    document
+      .getElementById('osu-api-settings')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('osu-api-client-id')?.focus({ preventScroll: true });
+  }
+  async function visitApiRegistration(event: MouseEvent) {
+    if (!isDesktop) return;
+    event.preventDefault();
+    try {
+      await openApiRegistration();
+    } catch (e) {
+      onlineWarning = String(e);
+    }
+  }
   async function connectReplays() {
     onlineConnecting = true;
     onlineWarning = '';
     try {
-      await connectOnlineReplays(apiClientId.trim(), apiClientSecret.trim());
-      onlineConnected = true;
-      onlineEpoch++;
+      applyApiState(await connectOnlineReplays(apiClientId.trim(), apiClientSecret.trim()));
     } catch (e) {
       onlineWarning = String(e);
     } finally {
@@ -549,11 +616,27 @@
     }
   }
   async function disconnectReplays() {
-    await disconnectOnlineReplays();
-    onlineConnected = false;
-    onlineChecking = false;
-    onlineReplays = new Map();
-    onlineWarning = '';
+    onlineConnecting = true;
+    try {
+      applyApiState(await disconnectOnlineReplays());
+      onlineChecking = false;
+      onlineReplays = new Map();
+    } catch (e) {
+      onlineWarning = String(e);
+    } finally {
+      onlineConnecting = false;
+    }
+  }
+  async function forgetApi() {
+    onlineConnecting = true;
+    try {
+      applyApiState(await forgetApiConnection());
+      onlineReplays = new Map();
+    } catch (e) {
+      onlineWarning = String(e);
+    } finally {
+      onlineConnecting = false;
+    }
   }
   async function changeCalculator(value: string) {
     selectingCalculator = true;
@@ -606,8 +689,6 @@
       await startDownloads({
         songs: downloadSongs,
         player: filters.player || null,
-        clientId: apiClientId.trim(),
-        clientSecret: apiClientSecret.trim(),
       });
       queue = {
         running: true,
@@ -931,6 +1012,19 @@
                 step="0.1"
                 bind:value={filters.minStars}
               /></label
+            ><label
+              >Maximum stars<input
+                type="number"
+                min="0"
+                step="0.1"
+                placeholder="Any"
+                value={filters.maxStars ?? ''}
+                oninput={(e) =>
+                  (filters.maxStars =
+                    e.currentTarget.value === ''
+                      ? null
+                      : Math.max(0, Number(e.currentTarget.value)))}
+              /></label
             ><label title="Show scores with 1 through N misses. Zero-miss plays are excluded."
               >Maximum misses<input
                 type="number"
@@ -985,6 +1079,12 @@
               to discover.{/if}</span
           >
         </div>
+        {#if onlineEnabled && onlineConnected && onlineProgress.total > 0}<p
+            class="online-replay-progress muted"
+            role="status"
+          >
+            {onlineProgressLabel}
+          </p>{/if}
         {#if busy && !scores.length}<div class="empty-state">
             <RefreshCw class="spin" size={30} />
             <h2>Building your local library</h2>
@@ -1364,72 +1464,28 @@
                 Available replays download to your replay export folder. Some scores have no
                 retained online replay or online score ID.
               </p>
-              <p class="muted">
-                Connect your osu! API application with public access. This uses the same client ID
-                and secret as beatmap lookup; your friend does not need to sign in. Credentials stay
-                in memory for this session.
-              </p>
-              <a href="https://osu.ppy.sh/home/account/edit#oauth" target="_blank" rel="noreferrer"
-                >Manage osu! API applications</a
+              <a
+                href="#osu-api-settings"
+                onclick={(e) => {
+                  e.preventDefault();
+                  void showApiSettings();
+                }}>Connect API</a
               >
-              <div class="download-api-fields">
-                <label class="form-label"
-                  >Client ID<input
-                    aria-label="Replay API client ID"
-                    bind:value={apiClientId}
-                    inputmode="numeric"
-                    autocomplete="off"
-                    disabled={onlineConnecting}
-                  /></label
-                >
-                <label class="form-label"
-                  >Client secret<input
-                    aria-label="Replay API client secret"
-                    type="password"
-                    bind:value={apiClientSecret}
-                    autocomplete="off"
-                    disabled={onlineConnecting}
-                  /></label
-                >
-              </div>
-              <div class="setting-actions">
-                <button
-                  class="button"
-                  disabled={!isDesktop ||
-                    onlineConnecting ||
-                    !apiClientId.trim() ||
-                    !apiClientSecret.trim()}
-                  onclick={connectReplays}
-                  >{onlineConnecting
-                    ? 'Connecting…'
-                    : onlineConnected
-                      ? 'Reconnect API'
-                      : 'Connect osu! API'}</button
-                >
-                {#if onlineConnected}<button class="button" onclick={disconnectReplays}
-                    >Disconnect</button
-                  ><button
-                    class="text-button"
-                    onclick={() => {
-                      onlineWarning = '';
-                      onlineEpoch++;
-                    }}>Retry online checks</button
-                  >{/if}
-              </div>
-              <p class="muted">
-                {onlineConnected
-                  ? 'Connected for this session.'
-                  : 'Not connected. Local replay exports work without an API connection.'}{onlineChecking
-                  ? ' Checking online replays…'
-                  : ''}
-              </p>
-              {#if onlineWarning}<p role="status">{onlineWarning}</p>{/if}
+              {#if onlineConnected}<button
+                  class="text-button"
+                  onclick={() => {
+                    onlineWarning = '';
+                    onlineEpoch++;
+                  }}>Retry online checks</button
+                >{/if}
+              {#if onlineProgress.total > 0}<p class="muted" role="status">
+                  {onlineProgressLabel}
+                </p>{/if}
             </details>
             <DownloadPanel
               bind:automatic={automaticDownloads}
               bind:songs={downloadSongs}
-              bind:clientId={apiClientId}
-              bind:clientSecret={apiClientSecret}
+              connectApi={showApiSettings}
               folders={downloadFolders}
               player={selectedPlayerLabel}
               status={queue}
@@ -1483,9 +1539,97 @@
               }}>Reset browser preferences</button
             >
           </section>
+          <section class="settings-panel" id="osu-api-settings">
+            <Settings size={22} />
+            <h2>osu! API connection</h2>
+            <p>
+              One connection for online replays and missing beatmap lookup. Your friends do not need
+              to sign in.
+            </p>
+            <ol class="api-steps">
+              <li>
+                <a
+                  href="https://osu.ppy.sh/home/account/edit#new-oauth-application"
+                  target="_blank"
+                  rel="noreferrer"
+                  onclick={visitApiRegistration}>Open your osu! account settings</a
+                > and sign in.
+              </li>
+              <li>
+                Create an OAuth application named <strong>osu! Score Explorer</strong>. Leave the
+                callback URL empty.
+              </li>
+              <li>
+                Copy its Client ID and Client secret below, then connect to verify and save them.
+              </li>
+            </ol>
+            <div class="download-api-fields">
+              <label class="form-label"
+                >Client ID<input
+                  id="osu-api-client-id"
+                  aria-label="osu API client ID"
+                  bind:value={apiClientId}
+                  inputmode="numeric"
+                  autocomplete="off"
+                  disabled={onlineConnecting}
+                /></label
+              >
+              <label class="form-label"
+                >Client secret<input
+                  aria-label="osu API client secret"
+                  type="password"
+                  bind:value={apiClientSecret}
+                  placeholder={apiSaved && apiClientId.trim() === savedApiClientId
+                    ? 'Saved client secret'
+                    : 'Paste your client secret'}
+                  autocomplete="off"
+                  disabled={onlineConnecting}
+                /></label
+              >
+            </div>
+            <div class="setting-actions">
+              <button
+                class="button"
+                disabled={!isDesktop ||
+                  onlineConnecting ||
+                  !apiClientId.trim() ||
+                  (!apiClientSecret.trim() &&
+                    !(apiSaved && apiClientId.trim() === savedApiClientId))}
+                onclick={connectReplays}
+                >{onlineConnecting
+                  ? 'Connecting…'
+                  : onlineConnected
+                    ? 'Reconnect API'
+                    : 'Connect osu! API'}</button
+              >
+              {#if onlineConnected}<button
+                  class="button"
+                  disabled={onlineConnecting}
+                  onclick={disconnectReplays}>Disconnect</button
+                >{/if}
+              {#if apiSaved}<button
+                  class="text-button"
+                  disabled={onlineConnecting}
+                  onclick={forgetApi}>Forget saved connection</button
+                >{/if}
+            </div>
+            <p role="status">
+              {onlineConnected
+                ? 'Connected for this session.'
+                : 'Not connected. Local features work without an API connection.'}
+            </p>
+            <p class="muted">
+              {apiSaved
+                ? onlineConnected
+                  ? 'Details saved securely for this Windows account. Reconnects automatically when you reopen the app, including after an update.'
+                  : 'Saved details are available. Connect to enable automatic reconnection.'
+                : 'After a successful connection, details are encrypted and saved for this Windows account across app versions.'}
+            </p>
+            {#if onlineWarning}<p role="status">{onlineWarning}</p>{/if}
+          </section>
           <section class="settings-panel">
             <Database size={22} />
-            <h2>Calculation cache</h2>
+            <h2>Library & calculations</h2>
             <label class="form-label"
               >PP calculator
               <select
@@ -1520,10 +1664,6 @@
               <dt>Artwork policy</dt>
               <dd>Read from Songs or lazer’s file store. No copied backgrounds.</dd>
             </dl>
-          </section>
-          <section class="settings-panel">
-            <Info size={22} />
-            <h2>Combined library</h2>
             <details class="account-links">
               <summary>Player names & account IDs</summary>
               <p>
@@ -1700,8 +1840,7 @@
       <DownloadPanel
         bind:automatic={automaticDownloads}
         bind:songs={downloadSongs}
-        bind:clientId={apiClientId}
-        bind:clientSecret={apiClientSecret}
+        connectApi={showApiSettings}
         folders={downloadFolders}
         player={selectedPlayerLabel}
         status={queue}

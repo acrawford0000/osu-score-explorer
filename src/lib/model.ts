@@ -119,6 +119,7 @@ export type Filters = {
   player: string;
   mode: string;
   minStars: number;
+  maxStars: number | null;
   maxMisses: number | null;
   mod: string;
   from: string;
@@ -134,6 +135,7 @@ export const defaultFilters: Filters = {
   player: '',
   mode: '0',
   minStars: 0,
+  maxStars: null,
   maxMisses: null,
   mod: '',
   from: '',
@@ -206,6 +208,7 @@ export function filterScores(scores: Score[], f: Filters): Score[] {
     if (!terms.every((t) => haystack.includes(t)) || (f.player && !matchesPlayer(s, f.player)))
       return false;
     if (f.minStars > 0 && (s.stars === null || s.stars < f.minStars)) return false;
+    if (f.maxStars != null && (s.stars === null || s.stars > f.maxStars)) return false;
     if (f.maxMisses !== null && (s.misses < 1 || s.misses > f.maxMisses)) return false;
     if (f.mod && scoreMods(s) !== f.mod) return false;
     if (f.maxNon300 !== null && (s.ss || non300(s) < 1 || non300(s) > f.maxNon300)) return false;

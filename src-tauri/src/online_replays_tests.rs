@@ -281,7 +281,7 @@ fn merged_stable_score_can_download_through_its_lazer_online_id_after_legacy_not
     fs::remove_dir_all(root).unwrap();
 }
 #[test]
-fn missing_replays_are_cached_but_mismatching_score_responses_are_not() {
+fn missing_replays_and_mismatches_are_cached_separately_across_restarts() {
     for mismatch in [false, true] {
         let (root, path, _, s) = fixture();
         let mut value: serde_json::Value = serde_json::from_slice(&details(&s, false)).unwrap();
@@ -300,7 +300,27 @@ fn missing_replays_are_cached_but_mismatching_score_responses_are_not() {
         connect(&service);
         let result = service.check(&path, &s.id);
         if mismatch {
-            assert!(result.is_err());
+            assert_eq!(result.unwrap().state, "mismatch");
+            // A fresh service has no token: a successful read proves no request.
+            assert_eq!(
+                Service::default().check(&path, &s.id).unwrap().state,
+                "mismatch"
+            );
+            let c = library::db(&path).unwrap();
+            assert_eq!(
+                c.query_row("SELECT COUNT(*) FROM online_replay_checks", [], |r| r
+                    .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            let choice = candidates(std::slice::from_ref(&s)).remove(0);
+            assert!(cached_mismatch(&c, &choice).unwrap());
+            let mut changed = choice.clone();
+            changed.score.combo += 1;
+            assert!(!cached_mismatch(&c, &changed).unwrap());
+            c.execute("UPDATE online_replay_mismatches SET checked=0", [])
+                .unwrap();
+            assert!(!cached_mismatch(&c, &choice).unwrap());
         } else {
             assert_eq!(result.unwrap().state, "unavailable");
             assert_eq!(service.check(&path, &s.id).unwrap().state, "unavailable");
@@ -335,4 +355,119 @@ fn wrong_replay_and_html_downloads_are_rejected_without_writing_an_export() {
         worker.join().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn shared_api_credentials_reconnect_after_restart_and_failed_replacement_keeps_working_details() {
+    let (root, path, _, _) = fixture();
+    let (service, _, worker) = server(vec![
+        auth(),
+        ("/oauth/token".into(), 401, String::new(), b"{}".to_vec()),
+        auth(),
+    ]);
+    let state = crate::api_settings::connect(
+        &path,
+        &service,
+        Credentials {
+            client_id: "123".into(),
+            client_secret: "fixture-secret".into(),
+        },
+    )
+    .unwrap();
+    assert!(state.connected && state.saved);
+    let json = serde_json::to_string(&state).unwrap();
+    assert!(!json.contains("secret"));
+    assert!(
+        crate::api_settings::connect(
+            &path,
+            &service,
+            Credentials {
+                client_id: "456".into(),
+                client_secret: "invalid-replacement".into()
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(service.credentials().unwrap().unwrap().client_id, "123");
+    assert!(
+        crate::api_settings::connect(
+            &root.join("nonexistent-directory/library.sqlite"),
+            &service,
+            Credentials {
+                client_id: "789".into(),
+                client_secret: "valid-but-unsaved".into()
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(service.credentials().unwrap().unwrap().client_id, "123");
+    worker.join().unwrap();
+    let (next_version, _, worker) = server(vec![auth(), auth()]);
+    let restored = crate::api_settings::restore(&path, &next_version).unwrap();
+    assert!(restored.connected && restored.saved);
+    assert_eq!(restored.client_id, "123");
+    assert_eq!(
+        next_version.credentials().unwrap().unwrap().client_secret,
+        "fixture-secret"
+    );
+    crate::api_settings::disconnect(&path, &next_version).unwrap();
+    assert!(
+        !crate::api_settings::restore(&path, &next_version)
+            .unwrap()
+            .connected
+    );
+    assert!(
+        crate::api_settings::connect(
+            &path,
+            &next_version,
+            Credentials {
+                client_id: "123".into(),
+                client_secret: String::new()
+            }
+        )
+        .unwrap()
+        .connected
+    );
+    worker.join().unwrap();
+    crate::api_settings::forget(&path, &next_version).unwrap();
+    assert!(next_version.credentials().unwrap().is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mismatching_online_id_does_not_hide_a_valid_alternative() {
+    let (root, path, _, mut s) = fixture();
+    s.solo_online_id = Some("900".into());
+    library::db(&path)
+        .unwrap()
+        .execute(
+            "UPDATE scores SET data=?1 WHERE id=?2",
+            params![serde_json::to_string(&s).unwrap(), s.id],
+        )
+        .unwrap();
+    let (service, seen, worker) = server(vec![
+        auth(),
+        (
+            "/api/v2/scores/900".into(),
+            200,
+            String::new(),
+            br#"{"id":901}"#.to_vec(),
+        ),
+        (
+            "/api/v2/scores/osu/7".into(),
+            200,
+            String::new(),
+            details(&s, true),
+        ),
+    ]);
+    connect(&service);
+    assert_eq!(service.check(&path, &s.id).unwrap().state, "available");
+    assert_eq!(
+        Service::default().check(&path, &s.id).unwrap().state,
+        "available"
+    );
+    worker.join().unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 3);
+    fs::remove_dir_all(root).unwrap();
 }

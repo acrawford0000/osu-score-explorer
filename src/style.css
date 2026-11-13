@@ -1457,3 +1457,48 @@ dd {
 .download-options .form-label input, .download-options select { width: 100%; min-width: 0; }
 .download-issues { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .download-notice > span { flex: 1; }
+
+.api-steps {
+  padding-left: 22px;
+  line-height: 1.8;
+}
+.api-steps li + li {
+  margin-top: 8px;
+}
+#osu-api-settings {
+  scroll-margin-top: 24px;
+}
+.download-options > summary {
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.online-replay-settings {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.online-replay-settings > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+#osu-api-settings .form-label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#osu-api-settings input {
+  width: 100%;
+  min-width: 0;
+}
+#osu-api-settings .download-api-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.api-steps {
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  #osu-api-settings .download-api-fields {
+    grid-template-columns: 1fr;
+  }
+}

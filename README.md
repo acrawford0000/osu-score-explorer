@@ -30,7 +30,7 @@ Export available local **stable and lazer replays** as `.osr` files from score c
 
 Missing a local replay? Connect **Online replays** in Settings to check osu! for available recordings, including when browsing a friend's imported score history. Cards show an **Online replay** button when one is available. Downloads use your replay export folder and can be exported again locally afterward. Some scores have no online recording or submitted score ID.
 
-Online checks require your osu! API application's client ID and secret; your friend does not need to sign in. Enter them under **Sources & exports → Online replays**. They are used for the current session only.
+Online checks require your osu! API application's client ID and secret; your friend does not need to sign in. Connect once under **Library & settings → osu! API connection**, which includes setup instructions and a link to create an application. This shared connection supports replay checks and beatmap lookup. Details are encrypted for your Windows account and remembered across app updates.
 
 ## Hear an old favorite again
 
@@ -52,7 +52,7 @@ Use your friend's `osu!.db` to identify maps, or configure osu! API lookup when 
 - **Full combos and SS scores:** revisit your achievements.
 - **PP if FC:** compare your result with an estimated full-combo result.
 
-Your filters work together, so you can search for something as specific as recent HD one-miss plays above 6 stars, or older SS opportunities with at most three non-300 judgments.
+Set minimum and maximum star ratings to explore a difficulty range. Your filters work together, so you can search for something as specific as recent HD one-miss plays above 6 stars, or older SS opportunities with at most three non-300 judgments.
 
 Setting **Maximum misses** shows 1–N misses and excludes zero-miss plays. **Max non-300s** shows 1–N imperfect judgments and excludes SSs, while keeping FCs with 100s or 50s. Clear either field to remove that limit.
 

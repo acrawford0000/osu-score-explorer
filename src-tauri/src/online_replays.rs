@@ -1,4 +1,4 @@
-//! Public-scope replay lookup and verified .osr export. Credentials stay in memory.
+//! Public-scope replay lookup, durable availability cache and verified .osr export.
 use crate::{
     library::{self, Score},
     replays,
@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 const MAX_REPLAY: u64 = 64 * 1024 * 1024;
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Credentials {
     pub client_id: String,
@@ -62,7 +62,7 @@ impl Status {
     }
 }
 pub(crate) fn schema(c: &Connection) -> Result<(), String> {
-    c.execute_batch("CREATE TABLE IF NOT EXISTS online_replay_checks(key TEXT PRIMARY KEY,input TEXT NOT NULL,available INTEGER NOT NULL,checked INTEGER NOT NULL);CREATE TABLE IF NOT EXISTS online_replay_exports(id TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,path));").map_err(|e|e.to_string())
+    c.execute_batch("CREATE TABLE IF NOT EXISTS online_replay_checks(key TEXT PRIMARY KEY,input TEXT NOT NULL,available INTEGER NOT NULL,checked INTEGER NOT NULL);CREATE TABLE IF NOT EXISTS online_replay_mismatches(key TEXT NOT NULL,input TEXT NOT NULL,checked INTEGER NOT NULL,PRIMARY KEY(key,input));CREATE TABLE IF NOT EXISTS online_replay_exports(id TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(id,path));").map_err(|e|e.to_string())
 }
 fn now() -> u64 {
     SystemTime::now()
@@ -132,6 +132,27 @@ fn remember(c: &Connection, v: &Candidate, available: bool) -> Result<(), String
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+// Keep a verification failure distinct from "no replay". The same online ID
+// may be attached to another imported record; only this exact input is skipped.
+fn cached_mismatch(c: &Connection, v: &Candidate) -> Result<bool, String> {
+    let checked: Option<i64> = c
+        .query_row(
+            "SELECT checked FROM online_replay_mismatches WHERE key=?1 AND input=?2",
+            params![v.key, fingerprint(&v.score)],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(checked.is_some_and(|t| now().saturating_sub(t.max(0) as u64) < 86400))
+}
+fn remember_mismatch(c: &Connection, v: &Candidate) -> Result<(), String> {
+    c.execute(
+        "INSERT OR REPLACE INTO online_replay_mismatches VALUES(?1,?2,?3)",
+        params![v.key, fingerprint(&v.score), now() as i64],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
 fn limited(mut response: reqwest::blocking::Response, max: u64) -> Result<Vec<u8>, String> {
     if response.content_length().is_some_and(|n| n > max) {
         return Err("Server response exceeds the supported size limit".into());
@@ -152,6 +173,24 @@ impl Service {
         *self.auth.lock().unwrap() = None;
     }
     pub fn connect(&self, credentials: Credentials) -> Result<(), String> {
+        self.connect_committing(credentials, |_| Ok(()))
+    }
+    pub(crate) fn credentials(&self) -> Result<Option<Credentials>, String> {
+        Ok(self
+            .auth
+            .lock()
+            .map_err(|e| e.to_string())?
+            .as_ref()
+            .map(|a| Credentials {
+                client_id: a.id.clone(),
+                client_secret: a.secret.clone(),
+            }))
+    }
+    pub(crate) fn connect_committing(
+        &self,
+        credentials: Credentials,
+        save: impl FnOnce(&Credentials) -> Result<(), String>,
+    ) -> Result<(), String> {
         if credentials.client_id.parse::<u64>().is_err()
             || credentials.client_secret.trim().is_empty()
         {
@@ -166,6 +205,7 @@ impl Service {
             .map_err(|e| e.to_string())?;
         let (token, expires) =
             self.authorize(&client, &credentials.client_id, &credentials.client_secret)?;
+        save(&credentials)?;
         *self.auth.lock().map_err(|e| e.to_string())? = Some(Auth {
             id: credentials.client_id,
             secret: credentials.client_secret,
@@ -294,7 +334,12 @@ impl Service {
                 "This score has no online score ID",
             ));
         }
+        let mut mismatched = false;
         for choice in choices {
+            if cached_mismatch(&c, &choice)? {
+                mismatched = true;
+                continue;
+            }
             if let Some(available) = cached(&c, &choice) {
                 if available {
                     return Ok(Status::new(id, "available", "Online replay available"));
@@ -340,7 +385,9 @@ impl Service {
             let value: serde_json::Value = serde_json::from_slice(&limited(r, 2 * 1024 * 1024)?)
                 .map_err(|_| "osu! returned an invalid score response")?;
             if !metadata_matches(&value, &choice) {
-                return Err("Online score details do not match the imported score".into());
+                remember_mismatch(&c, &choice)?;
+                mismatched = true;
+                continue;
             }
             let available = value["has_replay"]
                 .as_bool()
@@ -349,6 +396,13 @@ impl Service {
             if available {
                 return Ok(Status::new(id, "available", "Online replay available"));
             }
+        }
+        if mismatched {
+            return Ok(Status::new(
+                id,
+                "mismatch",
+                "Online score details do not match the imported score. Skipped safely; other scores are still checked. This result is saved for 24 hours.",
+            ));
         }
         Ok(Status::new(
             id,
@@ -365,7 +419,7 @@ impl Service {
         }
         let rows = replays::records(&c, id)?;
         for choice in candidates(&rows) {
-            if cached(&c, &choice) == Some(false) {
+            if cached_mismatch(&c, &choice)? || cached(&c, &choice) == Some(false) {
                 continue;
             }
             let r = self.get(&choice.key, true)?;
