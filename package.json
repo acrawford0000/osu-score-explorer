@@ -8,7 +8,8 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run && node --test tests/lazer-reader.node.cjs",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "release:prepare": "node scripts/prepare-windows-runtime.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.72.0",

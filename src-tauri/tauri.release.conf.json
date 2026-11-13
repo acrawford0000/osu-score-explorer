@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "licenseFile": "../LICENSE",
+    "resources": { "release-runtime/": "Score Explorer.runtime/" },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": { "installMode": "currentUser", "compression": "lzma" }
+    }
+  }
+}

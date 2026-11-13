@@ -68,9 +68,18 @@ pub(crate) fn runtime() -> Result<PathBuf, String> {
     let candidates = [
         exe.parent().unwrap().join("Score Explorer.runtime"),
         exe.parent().unwrap().join("runtime"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../runtime"),
     ];
-    candidates.into_iter().find(|p|p.join("node.exe").is_file()&&p.join("import-lazer.cjs").is_file()).ok_or_else(||"The lazer reader runtime is missing. Keep Score Explorer.runtime next to the application.".into())
+    let development = {
+        #[cfg(debug_assertions)]
+        {
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../runtime"))
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None::<PathBuf>
+        }
+    };
+    candidates.into_iter().chain(development).find(|p|p.join("node.exe").is_file()&&p.join("import-lazer.cjs").is_file()).ok_or_else(||"The lazer reader runtime is missing. Keep Score Explorer.runtime next to the application.".into())
 }
 pub(crate) fn snapshot(source: &Path, target: &Path) -> Result<(), String> {
     let mut options = fs::OpenOptions::new();

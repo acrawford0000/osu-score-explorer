@@ -2,6 +2,8 @@
 
 Rediscover your osu! scores. Find the plays you're proud of, the chokes worth another try, and the progress you've made along the way.
 
+**[Download for Windows](https://github.com/acrawford0000/osu-score-explorer/releases/latest)** — choose the setup `.exe`, or extract the portable ZIP and launch Score Explorer. Windows x64; no separate Node.js installation is needed.
+
 osu! Score Explorer brings local **stable and lazer scores** into one desktop score browser, with support for **osu!standard, taiko, catch, and mania**. Matching imported copies of a play stay together so they count once in your combined history.
 
 ![Score Explorer in the Bento theme with a sample library](docs/images/explorer-bento.jpg)

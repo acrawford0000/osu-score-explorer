@@ -21,6 +21,19 @@ The Windows preview locates its lazer runtime in either a `Score Explorer.runtim
 
 For browser-only UI work, use `npm run dev` and choose the sample library. Native imports require the desktop app.
 
+## Windows releases
+
+After installing the runtime dependencies and copying a Windows x64 Node binary into `runtime/node.exe`, prepare the redistributable runtime and build the optimized installer:
+
+```powershell
+npm run release:prepare
+npm run tauri -- build --config src-tauri/tauri.release.conf.json
+```
+
+The separate release configuration packages a per-user NSIS setup executable with `Score Explorer.runtime` beside the installed app. It can obtain WebView2 if missing. Staging excludes unused Android/Apple Realm libraries and includes Node and dependency license notices. The runtime preparation checks the actual bundled Node/Realm combination. Generated runtime files are ignored by Git. Release builds never fall back to a developer workspace for the lazer reader.
+
+A portable package contains `Score Explorer.exe`, the complete `Score Explorer.runtime` directory, and license notices. Keep the runtime directory beside the executable after extraction. Portable users need WebView2 installed. Publish checksums with the Windows assets and verify both the setup archive and the standalone runtime before publishing.
+
 ## Checks
 
 ```powershell

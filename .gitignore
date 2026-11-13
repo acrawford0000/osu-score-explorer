@@ -9,6 +9,7 @@ src-tauri/icons/*
 .DS_Store
 runtime/node.exe
 runtime/node_modules/
+src-tauri/release-runtime/
 *.realm*
 preview*.jpg
 *.exe
